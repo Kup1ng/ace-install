@@ -317,6 +317,13 @@ main() {
   password="$(openssl rand -base64 18 | tr -d '/+=' | cut -c1-20)"
   printf '%s\n' "$password" | docker compose -f "$dir/compose.yml" exec -T panel-api ace-panel admin create-owner --username "$ACE_OWNER" >/dev/null ||
     die "creating the Owner failed (see: ace logs panel-api)"
+  # Nodes pull the private agent image with the same read-only token.
+  if printf '%s\n' "$ACE_GHCR_TOKEN" | docker compose -f "$dir/compose.yml" exec -T panel-api \
+    ace-panel admin set-node-registry --server ghcr.io --username "$ACE_GHCR_USER" >/dev/null 2>&1; then
+    say "Nodes pull the agent with the same GitHub token (Settings → Nodes)"
+  else
+    warn "this panel version cannot take the token for nodes; set it in Settings → Nodes before adding one"
+  fi
 
   date -u +%Y-%m-%dT%H:%M:%SZ >"$dir/.installed"
   say "Done: the Ace panel ${ACE_VERSION} runs at https://${ACE_DOMAIN}"

@@ -22,7 +22,8 @@ The installer:
 2. asks for the domain, an email for Let's Encrypt (optional), the GitHub user and token, and the Owner's username;
 3. installs Docker Engine from Docker's repository when it is missing or older than 25 (replacing Ubuntu's `docker.io`);
 4. writes the panel to `/opt/ace` and makes its secrets there (the master key and the database passwords), on the server only;
-5. starts the panel with an HTTPS certificate, then creates the Owner with a generated password, **shown once** at the end.
+5. starts the panel with an HTTPS certificate, then creates the Owner with a generated password, **shown once** at the end;
+6. gives the panel the same GitHub user and token for its nodes (Settings → Nodes), so they can pull the private agent image.
 
 ### Options
 
