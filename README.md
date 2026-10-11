@@ -53,6 +53,10 @@ An install that stopped half-way can run again: it keeps the secrets it already 
 | `ace logs [service...]` | Follow the logs, e.g. `ace logs panel-api` |
 | `ace version` | The installed version |
 | `ace restart [service]` | Restart the panel, or one service |
+| `ace upgrade <version>` | Back up both databases to `/opt/ace/backups` (the last 3 stay), move the panel to `<version>`, and go back by itself if it is not healthy within 3 minutes |
+| `ace rollback` | Go back to the version before the last upgrade. The data stays as it is: the panel's migrations only expand the schema until a later version contracts it |
+
+An upgrade runs the target version's own `ace` from this repository's tag, so each version brings the steps it needs. Nothing changes before its files and images are downloaded, and the backup is made before the switch.
 
 ## Files
 
@@ -62,6 +66,8 @@ An install that stopped half-way can run again: it keeps the secrets it already 
 | `/opt/ace/.env` | The version, the domain and the address nodes reach MySQL at |
 | `/opt/ace/Caddyfile` | HTTPS for the domain |
 | `/opt/ace/secrets/` | The master key and database passwords (mode 700; never shown) |
+| `/opt/ace/backups/` | The databases as they were before each of the last 3 upgrades (root only, no password) |
+| `/opt/ace/rollback/` | The files of the version before the last upgrade, for `ace rollback` |
 
 Every image comes from GHCR with the panel's version, PostgreSQL, MySQL and Caddy included: each release copies them there, so one version is one known set of images.
 

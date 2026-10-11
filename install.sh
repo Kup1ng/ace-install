@@ -295,7 +295,12 @@ main() {
   fetch ace "$tmp/ace"
   make_secrets
   write_caddyfile
-  printf 'ACE_VERSION=%s\nACE_DOMAIN=%s\nACE_PUBLIC_IP=%s\n' "$ACE_VERSION" "$ACE_DOMAIN" "$ACE_PUBLIC_IP" >"$dir/.env"
+  # Root's only: a proxy's URL may hold a password; ace fetches through it.
+  (
+    umask 077
+    printf 'ACE_VERSION=%s\nACE_DOMAIN=%s\nACE_PUBLIC_IP=%s\n' "$ACE_VERSION" "$ACE_DOMAIN" "$ACE_PUBLIC_IP" >"$dir/.env"
+    if [[ -n "$proxy" ]]; then printf 'ACE_PROXY=%s\n' "$proxy" >>"$dir/.env"; fi
+  )
   install -m 755 "$tmp/ace" /usr/local/bin/ace
 
   say "Pulling the panel's images"

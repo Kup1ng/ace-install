@@ -1,11 +1,21 @@
 #!/usr/bin/env bash
 # The Ace panel's host command, installed by install.sh as /usr/local/bin/ace.
 # Run "ace help" for its commands.
+#
+# An upgrade runs the target version's own copy of this script (its
+# __upgrade command), so each version brings the steps it needs. Before it
+# changes anything it backs up both databases to /opt/ace/backups (the last
+# 3 stay), and it goes back by itself when the new version is not healthy
+# within 3 minutes. Going back never touches the data: the panel's
+# migrations only expand the schema until a later version contracts it.
 set -euo pipefail
 
 dir=/opt/ace
+repo_raw=https://raw.githubusercontent.com/Kup1ng/ace-install
+health_wait=60 # checks, 3 s apart: 3 minutes
 
 say() { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$*" >&2; }
 die() {
   printf '\033[1;31merror:\033[0m %s\n' "$*" >&2
   exit 1
@@ -19,17 +29,132 @@ Usage: ace <command>
   logs [service...]   follow the logs, e.g. ace logs panel-api
   version             the installed version
   restart [service]   restart the panel, or one of its services
+  upgrade <version>   back up the databases, move the panel to <version>,
+                      and go back by itself if it is not healthy in 3 minutes
+  rollback            go back to the version before the last upgrade; the
+                      data stays as it is
   help                this help
 
 The panel lives in /opt/ace: compose.yml, .env (version, domain, address),
-Caddyfile and secrets/ (never shown).
+Caddyfile, secrets/ (never shown) and backups/ (before each upgrade).
 EOF
 }
 
 compose() { docker compose -f "$dir/compose.yml" "$@"; }
 
-# setting NAME prints a value of /opt/ace/.env.
-setting() { sed -n "s/^$1=//p" "$dir/.env" 2>/dev/null | tail -1; }
+# setting NAME [FILE] prints a value of /opt/ace/.env, or of FILE.
+setting() { sed -n "s/^$1=//p" "${2:-$dir/.env}" 2>/dev/null | tail -1; }
+
+# set_setting NAME VALUE writes a value of /opt/ace/.env in one move.
+set_setting() {
+  local next
+  next="$(mktemp "$dir/.env.XXXXXX")"
+  grep -v "^$1=" "$dir/.env" >"$next" || true
+  printf '%s=%s\n' "$1" "$2" >>"$next"
+  chmod 600 "$next"
+  mv "$next" "$dir/.env"
+}
+
+# fetch VERSION NAME DEST downloads one of ace-install's files of a version.
+fetch() {
+  local proxy opts=(-fsSL --retry 3 --connect-timeout 15)
+  proxy="$(setting ACE_PROXY)"
+  [[ -z "$proxy" ]] || opts+=(-x "$proxy")
+  curl "${opts[@]}" "${repo_raw}/${ACE_INSTALL_REF:-v$1}/$2" -o "$3"
+}
+
+# healthy VERSION waits up to 3 minutes for the panel to answer its health
+# check as VERSION.
+healthy() {
+  local body
+  for _ in $(seq 1 "$health_wait"); do
+    body="$(compose exec -T panel-api wget -qO- http://127.0.0.1:8080/api/v1/health 2>/dev/null </dev/null || true)"
+    if [[ "$body" == *'"status":"ok"'* && "$body" == *"\"version\":\"$1\""* ]]; then
+      return 0
+    fi
+    sleep 3
+  done
+  return 1
+}
+
+start() { compose up -d --remove-orphans </dev/null; }
+
+# backup FROM TO dumps the panel's database and MySQL into
+# /opt/ace/backups/<time>-<from>-to-<to>/, for root only, and keeps the
+# last 3 such backups (D29).
+backup() {
+  backup_dir="$dir/backups/$(date -u +%Y%m%d-%H%M%S)-$1-to-$2"
+  install -d -m 700 "$dir/backups" "$backup_dir"
+  say "Backing up the databases to ${backup_dir}"
+  compose exec -T postgres pg_dump -U ace -d ace -Fc </dev/null >"$backup_dir/ace.pgdump" ||
+    die "backing up the panel's database failed; nothing changed"
+  # shellcheck disable=SC2016 # expanded in the container
+  compose exec -T mysql sh -c 'MYSQL_PWD="$(cat /run/secrets/mysql_root_password)" exec mysqldump -uroot --all-databases --single-transaction --routines --events --triggers' </dev/null |
+    gzip >"$backup_dir/mysql.sql.gz" || die "backing up MySQL failed; nothing changed"
+  chmod 600 "$backup_dir"/*
+  find "$dir/backups" -mindepth 1 -maxdepth 1 -type d | sort | head -n -3 | xargs -r rm -rf
+}
+
+# upgrade VERSION hands the upgrade to that version's own script.
+upgrade() {
+  local to="${1:-}" from next
+  [[ "$to" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || die "usage: ace upgrade <version>, e.g. ace upgrade 1.0.1"
+  from="$(setting ACE_VERSION)"
+  [[ "$to" != "$from" ]] || die "the panel already runs ${to}"
+  next="$(mktemp)"
+  fetch "$to" ace "$next" || die "no version ${to} in ace-install: https://github.com/Kup1ng/ace-install/tags"
+  exec bash "$next" __upgrade "$to" "$next"
+}
+
+# do_upgrade VERSION SELF runs in the target version's script: it gets the
+# files and images first, backs up, switches, and goes back on failure.
+do_upgrade() {
+  local to="$1" self="$2" from new
+  from="$(setting ACE_VERSION)"
+  new="$(mktemp -d)"
+  trap 'rm -rf "$new" "$self"' EXIT
+  fetch "$to" compose.yml "$new/compose.yml" || die "cannot download the stack of ${to}; nothing changed"
+  say "Pulling the images of ${to}"
+  ACE_VERSION="$to" docker compose --env-file "$dir/.env" -f "$new/compose.yml" pull </dev/null ||
+    die "cannot pull the images of ${to}; nothing changed"
+  backup "$from" "$to"
+
+  # What runs now, for a rollback by hand or by this script.
+  rm -rf "$dir/rollback"
+  install -d -m 700 "$dir/rollback"
+  cp -p "$dir/compose.yml" "$dir/.env" "$dir/rollback/"
+  cp -p /usr/local/bin/ace "$dir/rollback/ace"
+
+  say "Moving the panel from ${from} to ${to}"
+  cp "$new/compose.yml" "$dir/compose.yml"
+  set_setting ACE_VERSION "$to"
+  if start && healthy "$to"; then
+    install -m 755 "$self" /usr/local/bin/ace
+    say "Done: the panel runs ${to}; ace rollback goes back to ${from}"
+    return 0
+  fi
+  warn "the panel ${to} is not healthy within 3 minutes; going back to ${from}"
+  cp -p "$dir/rollback/compose.yml" "$dir/rollback/.env" "$dir/"
+  if start && healthy "$from"; then
+    rm -rf "$dir/rollback"
+    die "the upgrade to ${to} failed, and the panel runs ${from} again; see why with: ace logs panel-api"
+  fi
+  die "the upgrade failed, and ${from} is not healthy either; the databases as they were are in ${backup_dir}"
+}
+
+rollback() {
+  local from to
+  [[ -d "$dir/rollback" ]] || die "nothing to go back to: no upgrade since the install, or it was rolled back already"
+  from="$(setting ACE_VERSION)"
+  to="$(setting ACE_VERSION "$dir/rollback/.env")"
+  say "Going back from ${from} to ${to}; the data stays as it is"
+  cp -p "$dir/rollback/compose.yml" "$dir/rollback/.env" "$dir/"
+  start || die "the panel ${to} did not start (see: ace logs)"
+  healthy "$to" || die "the panel ${to} is not healthy within 3 minutes (see: ace logs panel-api)"
+  install -m 755 "$dir/rollback/ace" /usr/local/bin/ace
+  rm -rf "$dir/rollback"
+  say "Done: the panel runs ${to} again"
+}
 
 main() {
   [[ $EUID -eq 0 ]] || die "run as root"
@@ -47,6 +172,9 @@ main() {
     compose restart "$@"
     say "restarted ${1:-the panel}"
     ;;
+  upgrade) upgrade "$@" ;;
+  __upgrade) do_upgrade "$@" ;;
+  rollback) rollback ;;
   help | -h | --help) usage ;;
   *)
     usage >&2
