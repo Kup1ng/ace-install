@@ -102,7 +102,10 @@ upgrade() {
   from="$(setting ACE_VERSION)"
   [[ "$to" != "$from" ]] || die "the panel already runs ${to}"
   next="$(mktemp)"
-  fetch "$to" ace "$next" || die "no version ${to} in ace-install: https://github.com/Kup1ng/ace-install/tags"
+  if ! fetch "$to" ace "$next"; then
+    rm -f "$next"
+    die "no version ${to} in ace-install: https://github.com/Kup1ng/ace-install/tags"
+  fi
   exec bash "$next" __upgrade "$to" "$next"
 }
 
