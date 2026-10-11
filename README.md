@@ -75,3 +75,11 @@ Every image comes from GHCR with the panel's version, PostgreSQL, MySQL and Cadd
 ## Versions
 
 [`VERSION`](VERSION) names the current release. The tag `v<version>` of this repository holds the files of that version, which the installer takes.
+
+## Checks
+
+CI runs shellcheck and `bash -n` on the scripts and `docker compose config` on the stack. [`test/ace.sh`](test/ace.sh) runs `ace upgrade` and `ace rollback` against stub `docker` and `curl`: a good upgrade, a rollback, an upgrade that goes back by itself, the refusals, the last 3 backups, and no temporary file left. It writes `/opt/ace`, so it runs in CI or a throwaway container only:
+
+```bash
+docker run --rm -v "$PWD:/src:ro" ubuntu:24.04 bash /src/test/ace.sh
+```

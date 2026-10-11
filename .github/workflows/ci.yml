@@ -15,11 +15,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: shellcheck
-        run: shellcheck -x install.sh ace
+        run: shellcheck -x install.sh ace test/ace.sh
       - name: bash -n
         run: |
           bash -n install.sh
           bash -n ace
+          bash -n test/ace.sh
       - name: The stack's file is valid
         env:
           ACE_VERSION: 0.0.0
@@ -29,3 +30,11 @@ jobs:
           docker compose -f compose.yml config --quiet
       - name: VERSION is a version
         run: grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+' VERSION
+
+  ace:
+    name: ace upgrade and rollback (against stubs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: test/ace.sh
+        run: sudo CI=true bash test/ace.sh
