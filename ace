@@ -109,10 +109,12 @@ upgrade() {
 # do_upgrade VERSION SELF runs in the target version's script: it gets the
 # files and images first, backs up, switches, and goes back on failure.
 do_upgrade() {
-  local to="$1" self="$2" from new
-  from="$(setting ACE_VERSION)"
+  local to="$1" from
+  # Not local: the EXIT trap runs after this function returns.
+  self="$2"
   new="$(mktemp -d)"
   trap 'rm -rf "$new" "$self"' EXIT
+  from="$(setting ACE_VERSION)"
   fetch "$to" compose.yml "$new/compose.yml" || die "cannot download the stack of ${to}; nothing changed"
   say "Pulling the images of ${to}"
   ACE_VERSION="$to" docker compose --env-file "$dir/.env" -f "$new/compose.yml" pull </dev/null ||
