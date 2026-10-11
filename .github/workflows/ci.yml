@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  scripts:
+    name: Scripts (shellcheck, bash -n, compose config)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: shellcheck
+        run: shellcheck -x install.sh ace
+      - name: bash -n
+        run: |
+          bash -n install.sh
+          bash -n ace
+      - name: The stack's file is valid
+        env:
+          ACE_VERSION: 0.0.0
+          ACE_PUBLIC_IP: 203.0.113.10
+        run: |
+          mkdir -p secrets && touch secrets/api.env
+          docker compose -f compose.yml config --quiet
+      - name: VERSION is a version
+        run: grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+' VERSION

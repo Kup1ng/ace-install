@@ -1,0 +1,123 @@
+# The Ace panel's stack, installed in /opt/ace by install.sh and moved
+# between versions by `ace upgrade` and `ace rollback`. Every image comes
+# from GHCR with the panel's version: the release copies PostgreSQL, MySQL
+# and Caddy there too, so one version is one known set of images.
+#
+# /opt/ace/.env holds ACE_VERSION, ACE_DOMAIN and ACE_PUBLIC_IP. The secrets
+# live in /opt/ace/secrets (mode 700), made on this server and never shown:
+#   master_key           the panel's master key (base64, 32 bytes)
+#   pg_password          PostgreSQL's password
+#   api.env              ACE_PANEL_DATABASE_URL with that password
+#   mysql_root_password  MySQL's root password
+#   mysql_admin_dsn      the panel's MySQL admin DSN with it
+name: ace
+
+services:
+  postgres:
+    image: ghcr.io/kup1ng/ace-postgres:${ACE_VERSION:?set ACE_VERSION in /opt/ace/.env}
+    environment:
+      POSTGRES_USER: ace
+      POSTGRES_DB: ace
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg_password
+    volumes:
+      - pg-data:/var/lib/postgresql
+      - ./secrets/pg_password:/run/secrets/pg_password:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ace -d ace"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  mysql:
+    image: ghcr.io/kup1ng/ace-mysql:${ACE_VERSION:?}
+    environment:
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/mysql_root_password
+      # The panel's admin account, from the stack's network only.
+      MYSQL_ROOT_HOST: "10.88.0.%"
+    command: ["--innodb-buffer-pool-size=256M"]
+    ports:
+      - "3306:3306" # for the nodes' game servers; ace-fw drops everyone else
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./secrets/mysql_root_password:/run/secrets/mysql_root_password:ro
+    healthcheck:
+      # Alive even when it refuses the login: the exit status only says it runs.
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  # Opens MySQL's port to the nodes' addresses only (nftables on the host).
+  ace-fw:
+    image: ghcr.io/kup1ng/ace-panel-api:${ACE_VERSION:?}
+    command: ["fw"]
+    user: root
+    network_mode: host
+    cap_add: [NET_ADMIN]
+    environment:
+      ACE_PANEL_FW_FILE: /run/ace-fw/allowlist.json
+    volumes:
+      - fw-state:/run/ace-fw:ro
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+
+  panel-api:
+    image: ghcr.io/kup1ng/ace-panel-api:${ACE_VERSION:?}
+    env_file: ./secrets/api.env
+    environment:
+      ACE_PANEL_MASTER_KEY_FILE: /run/secrets/master_key
+      ACE_PANEL_COOKIE_SECURE: "true"
+      ACE_PANEL_LOG_FORMAT: json
+      ACE_PANEL_MYSQL_ADMIN_DSN_FILE: /run/secrets/mysql_admin_dsn
+      ACE_PANEL_MYSQL_ADDRESS: ${ACE_PUBLIC_IP:?set ACE_PUBLIC_IP in /opt/ace/.env}:3306
+      ACE_PANEL_FW_FILE: /run/ace-fw/allowlist.json
+    volumes:
+      - ./secrets/master_key:/run/secrets/master_key:ro
+      - ./secrets/mysql_admin_dsn:/run/secrets/mysql_admin_dsn:ro
+      - fw-state:/run/ace-fw
+      # The panel's data: the last 10 backups, and a master key a restore
+      # brought, which wins over the one above. As secret as it.
+      - panel-data:/var/lib/ace-panel
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+
+  panel-web:
+    image: ghcr.io/kup1ng/ace-panel-web:${ACE_VERSION:?}
+    restart: unless-stopped
+
+  # HTTPS with a Let's Encrypt certificate for ACE_DOMAIN (Caddyfile).
+  caddy:
+    image: ghcr.io/kup1ng/ace-caddy:${ACE_VERSION:?}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - panel-api
+      - panel-web
+    restart: unless-stopped
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 10.88.0.0/24
+
+volumes:
+  pg-data:
+  mysql-data:
+  fw-state:
+  panel-data:
+  caddy-data:
+  caddy-config:

@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# The Ace panel's host command, installed by install.sh as /usr/local/bin/ace.
+# Run "ace help" for its commands.
+set -euo pipefail
+
+dir=/opt/ace
+
+say() { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
+die() {
+  printf '\033[1;31merror:\033[0m %s\n' "$*" >&2
+  exit 1
+}
+
+usage() {
+  cat <<'EOF'
+Usage: ace <command>
+
+  status              the panel's containers and its version
+  logs [service...]   follow the logs, e.g. ace logs panel-api
+  version             the installed version
+  restart [service]   restart the panel, or one of its services
+  help                this help
+
+The panel lives in /opt/ace: compose.yml, .env (version, domain, address),
+Caddyfile and secrets/ (never shown).
+EOF
+}
+
+compose() { docker compose -f "$dir/compose.yml" "$@"; }
+
+# setting NAME prints a value of /opt/ace/.env.
+setting() { sed -n "s/^$1=//p" "$dir/.env" 2>/dev/null | tail -1; }
+
+main() {
+  [[ $EUID -eq 0 ]] || die "run as root"
+  [[ -f "$dir/compose.yml" ]] || die "the Ace panel is not installed in ${dir}"
+  local cmd="${1:-help}"
+  [[ $# -eq 0 ]] || shift
+  case "$cmd" in
+  status)
+    compose ps
+    printf '\nversion %s at https://%s\n' "$(setting ACE_VERSION)" "$(setting ACE_DOMAIN)"
+    ;;
+  logs) compose logs --tail=200 -f "$@" ;;
+  version) setting ACE_VERSION ;;
+  restart)
+    compose restart "$@"
+    say "restarted ${1:-the panel}"
+    ;;
+  help | -h | --help) usage ;;
+  *)
+    usage >&2
+    die "unknown command: ${cmd}"
+    ;;
+  esac
+}
+
+main "$@"
