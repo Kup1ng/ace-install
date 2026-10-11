@@ -58,6 +58,10 @@ check_server() {
   [[ -z "$mirror" || ("$mirror" =~ ^https?:// && "$mirror" =~ $url_chars) ]] ||
     die "ACE_APT_MIRROR must be an http:// or https:// URL"
   [[ ! -e "$dir/.installed" ]] || die "the Ace panel is already installed in ${dir}; use: ace upgrade <version>"
+  # A panel set up by hand has no marker, but runs.
+  if command -v docker >/dev/null && [[ -n "$(docker ps -q --filter label=com.docker.compose.project=ace 2>/dev/null)" ]]; then
+    die "an Ace panel already runs on this server (Docker Compose project \"ace\"); this installer is for a fresh one"
+  fi
   [[ -d /sys/module/nf_tables ]] || modprobe nf_tables 2>/dev/null ||
     die "the kernel has no nftables, which keeps MySQL to the nodes"
   local mem_gib free_gb
