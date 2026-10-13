@@ -3,7 +3,8 @@
 # date and sleep are stubs, so the panel "runs" the version it was last
 # started with and answers healthy unless that version is marked broken.
 # It covers a good upgrade, a rollback by hand, an upgrade that goes back by
-# itself, the refusals, the last 3 backups, and that no temporary file stays.
+# itself, the refusals, the last 3 backups, the Caddyfile's upload timeout
+# (added on upgrade, put back on rollback), and that no temporary file stays.
 #
 # It writes /opt/ace and /usr/local/bin/ace, so it runs only in CI or in a
 # throwaway container:
@@ -92,8 +93,11 @@ cp "$src/compose.yml" /opt/ace/compose.yml
 printf 'ACE_VERSION=1.0.0\nACE_DOMAIN=panel.example.test\nACE_PUBLIC_IP=192.0.2.10\n' >/opt/ace/.env
 chmod 600 /opt/ace/.env
 install -m 755 "$src/ace" /usr/local/bin/ace
+# The Caddyfile of an install from before the upload timeout, with an email.
+printf '# The Ace panel.\n{\n\temail admin@example.test\n}\n\npanel.example.test {\n\treverse_proxy panel-api:8080\n}\n' >/opt/ace/Caddyfile
+old_caddy="$(cat /opt/ace/Caddyfile)"
 echo 1.0.0 >"$state/running"
-printf '%s\n' 1.0.0 1.0.1 1.0.2 1.0.3 1.0.4 1.0.5 1.0.6 >"$state/published"
+printf '%s\n' 1.0.0 1.0.1 1.0.2 1.0.3 1.0.4 1.0.5 1.0.6 1.0.7 1.0.8 >"$state/published"
 : >"$state/broken"
 : >"$state/unpullable"
 
@@ -128,11 +132,18 @@ b="/opt/ace/backups/$(backups | tail -1)"
 [[ "$(gzip -dc "$b/mysql.sql.gz")" == "mysqldump of 1.0.0" ]] || fail "MySQL's backup is not 1.0.0's"
 [[ "$(stat -c %a "$b") $(stat -c %a "$b/ace.pgdump")" == "700 600" ]] || fail "the backup is not root's only"
 grep -qx 'ACE_VERSION=1.0.0' /opt/ace/rollback/.env || fail "the rollback files are not 1.0.0's"
+[[ "$(cat /opt/ace/rollback/Caddyfile)" == "$old_caddy" ]] || fail "the rollback files lack 1.0.0's Caddyfile"
+if [[ "$(head -6 /opt/ace/Caddyfile)" != $'# The Ace panel.\n{\n\tservers {\n\t\ttimeouts {\n\t\t\tread_body_idle 5m\n\t\t}' ]] ||
+  ! grep -qx $'\temail admin@example.test' /opt/ace/Caddyfile || [[ "$(grep -c '^{' /opt/ace/Caddyfile)" != 1 ]]; then
+  fail "the upload timeout is not in the global block: $(cat /opt/ace/Caddyfile)"
+fi
+grep -q '^panel.example.test {' /opt/ace/Caddyfile || fail "the site went from the Caddyfile"
 
 echo "a rollback by hand"
 run ace rollback
 expect 0 1.0.0 "Done: the panel runs 1.0.0 again"
 [[ ! -e /opt/ace/rollback ]] || fail "the rollback files stayed"
+[[ "$(cat /opt/ace/Caddyfile)" == "$old_caddy" ]] || fail "the rollback did not put 1.0.0's Caddyfile back"
 run ace rollback
 expect 1 1.0.0 "nothing to go back to"
 
@@ -141,6 +152,7 @@ echo 1.0.2 >"$state/broken"
 run ace upgrade 1.0.2
 expect 1 1.0.0 "the upgrade to 1.0.2 failed, and the panel runs 1.0.0 again"
 [[ ! -e /opt/ace/rollback ]] || fail "the rollback files stayed after going back"
+[[ "$(cat /opt/ace/Caddyfile)" == "$old_caddy" ]] || fail "going back did not put 1.0.0's Caddyfile back"
 
 echo "refusals change nothing"
 run ace upgrade 1.0.0
@@ -164,10 +176,24 @@ run ace upgrade 1.0.6
 expect 1 1.0.4 "cannot pull the images of 1.0.6; nothing changed"
 [[ "$(backups | wc -l)" == 3 && "$(backups | tail -1)" == *-1.0.3-to-1.0.4 ]] || fail "a backup was made: $(backups)"
 
+echo "a Caddyfile without a global block gets one, once"
+printf 'panel.example.test {\n\treverse_proxy panel-api:8080\n}\n' >/opt/ace/Caddyfile
+run ace upgrade 1.0.7
+expect 0 1.0.7
+if [[ "$(head -7 /opt/ace/Caddyfile)" != $'{\n\tservers {\n\t\ttimeouts {\n\t\t\tread_body_idle 5m\n\t\t}\n\t}\n}' ]] ||
+  ! grep -q '^panel.example.test {' /opt/ace/Caddyfile; then
+  fail "no global block before the site: $(cat /opt/ace/Caddyfile)"
+fi
+[[ "$(stat -c %a /opt/ace/Caddyfile)" == 644 ]] || fail "the Caddyfile's mode changed: $(stat -c %a /opt/ace/Caddyfile)"
+with_timeout="$(cat /opt/ace/Caddyfile)"
+run ace upgrade 1.0.8
+expect 0 1.0.8
+[[ "$(cat /opt/ace/Caddyfile)" == "$with_timeout" ]] || fail "a Caddyfile that had the timeout changed: $(cat /opt/ace/Caddyfile)"
+
 echo "neither version healthy: the backup is named"
-printf '%s\n' 1.0.4 1.0.5 >"$state/broken"
+printf '%s\n' 1.0.8 1.0.5 >"$state/broken"
 run ace upgrade 1.0.5
-expect 1 1.0.4 "1.0.4 is not healthy either; the databases as they were are in /opt/ace/backups/"
+expect 1 1.0.8 "1.0.8 is not healthy either; the databases as they were are in /opt/ace/backups/"
 [[ -d /opt/ace/rollback ]] || fail "the rollback files went with nothing rolled back"
 
 echo "all good"

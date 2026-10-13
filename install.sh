@@ -236,9 +236,13 @@ make_secrets() {
 write_caddyfile() {
   {
     printf '# The Ace panel: one origin for the web app and the API, with a\n# Let'"'"'s Encrypt certificate (written by the Ace installer).\n'
+    printf '{\n'
     if [[ -n "${ACE_EMAIL:-}" ]]; then
-      printf '{\n\temail %s\n}\n\n' "$ACE_EMAIL"
+      printf '\temail %s\n' "$ACE_EMAIL"
     fi
+    # An upload that stalls (a plugin bundle of 80 MB on a slow line) gets 5
+    # minutes before Caddy gives up, instead of Caddy 2.11's 1 minute.
+    printf '\tservers {\n\t\ttimeouts {\n\t\t\tread_body_idle 5m\n\t\t}\n\t}\n}\n\n'
     printf '%s {\n\tencode zstd gzip\n\n\thandle /api/* {\n\t\treverse_proxy panel-api:8080\n\t}\n\n\thandle {\n\t\treverse_proxy panel-web:3000\n\t}\n}\n' "$ACE_DOMAIN"
   } >"$dir/Caddyfile"
 }

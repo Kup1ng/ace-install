@@ -65,10 +65,10 @@ An upgrade runs the target version's own `ace` from this repository's tag, so ea
 |---|---|
 | `/opt/ace/compose.yml` | The stack: PostgreSQL, MySQL, the panel's API and web app, Caddy, and `ace-fw` (MySQL's firewall) |
 | `/opt/ace/.env` | The version, the domain and the address nodes reach MySQL at |
-| `/opt/ace/Caddyfile` | HTTPS for the domain |
+| `/opt/ace/Caddyfile` | HTTPS for the domain; an upload that stalls gets 5 minutes (`read_body_idle`) instead of Caddy's 1, which cut an 80 MB plugin bundle on a slow line. An upgrade adds that to the Caddyfile of an older install, and a rollback puts the old file back |
 | `/opt/ace/secrets/` | The master key and database passwords (mode 700; never shown) |
 | `/opt/ace/backups/` | The databases as they were before each of the last 3 upgrades (root only, no password) |
-| `/opt/ace/rollback/` | The files of the version before the last upgrade, for `ace rollback` |
+| `/opt/ace/rollback/` | The files of the version before the last upgrade (`compose.yml`, `.env`, `Caddyfile`, `ace`), for `ace rollback` |
 
 Every image comes from GHCR with the panel's version, PostgreSQL, MySQL and Caddy included: each release copies them there, so one version is one known set of images.
 
@@ -78,7 +78,7 @@ Every image comes from GHCR with the panel's version, PostgreSQL, MySQL and Cadd
 
 ## Checks
 
-CI runs shellcheck and `bash -n` on the scripts and `docker compose config` on the stack. [`test/ace.sh`](test/ace.sh) runs `ace upgrade` and `ace rollback` against stub `docker` and `curl`: a good upgrade, a rollback, an upgrade that goes back by itself, the refusals, the last 3 backups, and no temporary file left. It writes `/opt/ace`, so it runs in CI or a throwaway container only:
+CI runs shellcheck and `bash -n` on the scripts and `docker compose config` on the stack. [`test/ace.sh`](test/ace.sh) runs `ace upgrade` and `ace rollback` against stub `docker` and `curl`: a good upgrade, a rollback, an upgrade that goes back by itself, the refusals, the last 3 backups, the Caddyfile's upload timeout (added once, put back on rollback), and no temporary file left. It writes `/opt/ace`, so it runs in CI or a throwaway container only:
 
 ```bash
 docker run --rm -v "$PWD:/src:ro" ubuntu:24.04 bash /src/test/ace.sh

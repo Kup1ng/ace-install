@@ -79,6 +79,31 @@ healthy() {
 
 start() { compose up -d --remove-orphans </dev/null; }
 
+# caddy_timeouts gives the Caddyfile of an older install what install.sh
+# writes now: an upload that stalls (a plugin bundle of 80 MB on a slow
+# line) gets 5 minutes before Caddy gives up, instead of Caddy 2.11's 1
+# minute. A Caddyfile that has it, or none, stays as it is.
+caddy_timeouts() {
+  local file="$dir/Caddyfile" next
+  [[ -f "$file" ]] || return 0
+  grep -q 'read_body_idle' "$file" && return 0
+  next="$(mktemp "$dir/Caddyfile.XXXXXX")"
+  if [[ "$(grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$file" | head -1)" == "{" ]]; then
+    # Into the global options block, which the file starts with.
+    awk '{ print } !done && $0 == "{" { print "\tservers {\n\t\ttimeouts {\n\t\t\tread_body_idle 5m\n\t\t}\n\t}"; done = 1 }' "$file" >"$next"
+  else
+    { printf '{\n\tservers {\n\t\ttimeouts {\n\t\t\tread_body_idle 5m\n\t\t}\n\t}\n}\n\n'; cat "$file"; } >"$next"
+  fi
+  chmod --reference="$file" "$next"
+  mv "$next" "$file"
+}
+
+# restore puts back the files of the version before the upgrade.
+restore() {
+  cp -p "$dir/rollback/compose.yml" "$dir/rollback/.env" "$dir/"
+  [[ ! -f "$dir/rollback/Caddyfile" ]] || cp -p "$dir/rollback/Caddyfile" "$dir/"
+}
+
 # backup FROM TO dumps the panel's database and MySQL into
 # /opt/ace/backups/<time>-<from>-to-<to>/, for root only, and keeps the
 # last 3 such backups (D29).
@@ -128,10 +153,12 @@ do_upgrade() {
   rm -rf "$dir/rollback"
   install -d -m 700 "$dir/rollback"
   cp -p "$dir/compose.yml" "$dir/.env" "$dir/rollback/"
+  [[ ! -f "$dir/Caddyfile" ]] || cp -p "$dir/Caddyfile" "$dir/rollback/"
   cp -p /usr/local/bin/ace "$dir/rollback/ace"
 
   say "Moving the panel from ${from} to ${to}"
   cp "$new/compose.yml" "$dir/compose.yml"
+  caddy_timeouts
   set_setting ACE_VERSION "$to"
   if start && healthy "$to"; then
     install -m 755 "$self" /usr/local/bin/ace
@@ -139,7 +166,7 @@ do_upgrade() {
     return 0
   fi
   warn "the panel ${to} is not healthy within 3 minutes; going back to ${from}"
-  cp -p "$dir/rollback/compose.yml" "$dir/rollback/.env" "$dir/"
+  restore
   if start && healthy "$from"; then
     rm -rf "$dir/rollback"
     die "the upgrade to ${to} failed, and the panel runs ${from} again; see why with: ace logs panel-api"
@@ -153,7 +180,7 @@ rollback() {
   from="$(setting ACE_VERSION)"
   to="$(setting ACE_VERSION "$dir/rollback/.env")"
   say "Going back from ${from} to ${to}; the data stays as it is"
-  cp -p "$dir/rollback/compose.yml" "$dir/rollback/.env" "$dir/"
+  restore
   start || die "the panel ${to} did not start (see: ace logs)"
   healthy "$to" || die "the panel ${to} is not healthy within 3 minutes (see: ace logs panel-api)"
   install -m 755 "$dir/rollback/ace" /usr/local/bin/ace
