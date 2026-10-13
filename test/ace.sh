@@ -178,13 +178,14 @@ expect 1 1.0.4 "cannot pull the images of 1.0.6; nothing changed"
 
 echo "a Caddyfile without a global block gets one, once"
 printf 'panel.example.test {\n\treverse_proxy panel-api:8080\n}\n' >/opt/ace/Caddyfile
+mode="$(stat -c %a /opt/ace/Caddyfile)"
 run ace upgrade 1.0.7
 expect 0 1.0.7
 if [[ "$(head -7 /opt/ace/Caddyfile)" != $'{\n\tservers {\n\t\ttimeouts {\n\t\t\tread_body_idle 5m\n\t\t}\n\t}\n}' ]] ||
   ! grep -q '^panel.example.test {' /opt/ace/Caddyfile; then
   fail "no global block before the site: $(cat /opt/ace/Caddyfile)"
 fi
-[[ "$(stat -c %a /opt/ace/Caddyfile)" == 644 ]] || fail "the Caddyfile's mode changed: $(stat -c %a /opt/ace/Caddyfile)"
+[[ "$(stat -c %a /opt/ace/Caddyfile)" == "$mode" ]] || fail "the Caddyfile's mode changed: ${mode} to $(stat -c %a /opt/ace/Caddyfile)"
 with_timeout="$(cat /opt/ace/Caddyfile)"
 run ace upgrade 1.0.8
 expect 0 1.0.8
