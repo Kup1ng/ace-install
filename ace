@@ -29,6 +29,9 @@ Usage: ace <command>
   logs [service...]   follow the logs, e.g. ace logs panel-api
   version             the installed version
   restart [service]   restart the panel, or one of its services
+  apply               apply a change to .env: recreates only the services
+                      whose settings changed (MySQL's restart takes the game
+                      servers' database away for a few seconds)
   upgrade <version>   back up the databases, move the panel to <version>,
                       and go back by itself if it is not healthy in 3 minutes
   rollback            go back to the version before the last upgrade; the
@@ -203,6 +206,10 @@ main() {
   restart)
     compose restart "$@"
     say "restarted ${1:-the panel}"
+    ;;
+  apply)
+    compose up -d
+    say "applied ${dir}/.env"
     ;;
   upgrade) upgrade "$@" ;;
   __upgrade) do_upgrade "$@" ;;

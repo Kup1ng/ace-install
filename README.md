@@ -64,13 +64,19 @@ An upgrade runs the target version's own `ace` from this repository's tag, so ea
 | Path | Holds |
 |---|---|
 | `/opt/ace/compose.yml` | The stack: PostgreSQL, MySQL, the panel's API and web app, Caddy, and `ace-fw` (MySQL's firewall) |
-| `/opt/ace/.env` | The version, the domain and the address nodes reach MySQL at |
+| `/opt/ace/.env` | The version, the domain, the address nodes reach MySQL at, and optional settings (below) |
 | `/opt/ace/Caddyfile` | HTTPS for the domain; an upload that stalls gets 5 minutes (`read_body_idle`) instead of Caddy's 1, which cut an 80 MB plugin bundle on a slow line. An upgrade adds that to the Caddyfile of an older install, and a rollback puts the old file back |
 | `/opt/ace/secrets/` | The master key and database passwords (mode 700; never shown) |
 | `/opt/ace/backups/` | The databases as they were before each of the last 3 upgrades (root only, no password) |
 | `/opt/ace/rollback/` | The files of the version before the last upgrade (`compose.yml`, `.env`, `Caddyfile`, `ace`), for `ace rollback` |
 
 Every image comes from GHCR with the panel's version, PostgreSQL, MySQL and Caddy included: each release copies them there, so one version is one known set of images.
+
+Optional settings in `/opt/ace/.env`; after a change run `ace apply`, which recreates only the services whose settings changed:
+
+| Setting | Default | What it does |
+|---|---|---|
+| `ACE_MYSQL_MAX_CONNECTIONS` | `500` | MySQL's `max_connections`. Every node's game servers (WeaponPaints opens several connections per server at a map change, for about 3 minutes) and users' plugin databases share it; the panel gives each node's skins account half of it divided by the nodes (between 30 and 100). Each connection in use takes about 0.5 to 2 MB of the server's memory, so raise it with more nodes or more memory. Applying it restarts MySQL: game servers lose their database for a few seconds. |
 
 ## Versions
 

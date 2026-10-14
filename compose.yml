@@ -35,7 +35,11 @@ services:
       MYSQL_ROOT_PASSWORD_FILE: /run/secrets/mysql_root_password
       # The panel's admin account, from the stack's network only.
       MYSQL_ROOT_HOST: "10.88.0.%"
-    command: ["--innodb-buffer-pool-size=256M"]
+    # max_connections: every node's game servers (WeaponPaints and other
+    # plugins) and users' plugin databases share it, and the panel gives each
+    # node's skins account a share of it. Set ACE_MYSQL_MAX_CONNECTIONS in
+    # .env to change it, then run `ace apply`.
+    command: ["--innodb-buffer-pool-size=256M", "--max-connections=${ACE_MYSQL_MAX_CONNECTIONS:-500}"]
     ports:
       - "3306:3306" # for the nodes' game servers; ace-fw drops everyone else
     volumes:

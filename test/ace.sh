@@ -4,7 +4,8 @@
 # started with and answers healthy unless that version is marked broken.
 # It covers a good upgrade, a rollback by hand, an upgrade that goes back by
 # itself, the refusals, the last 3 backups, the Caddyfile's upload timeout
-# (added on upgrade, put back on rollback), and that no temporary file stays.
+# (added on upgrade, put back on rollback), ace apply, and that no temporary
+# file stays.
 #
 # It writes /opt/ace and /usr/local/bin/ace, so it runs only in CI or in a
 # throwaway container:
@@ -196,5 +197,9 @@ printf '%s\n' 1.0.8 1.0.5 >"$state/broken"
 run ace upgrade 1.0.5
 expect 1 1.0.8 "1.0.8 is not healthy either; the databases as they were are in /opt/ace/backups/"
 [[ -d /opt/ace/rollback ]] || fail "the rollback files went with nothing rolled back"
+
+echo "ace apply brings the stack up with .env"
+run ace apply
+expect 0 1.0.8 "applied /opt/ace/.env"
 
 echo "all good"
