@@ -1,18 +1,22 @@
 #!/usr/bin/env bash
-# The Ace panel's host command, installed by install.sh as /usr/local/bin/ace.
-# Run "ace help" for its commands.
+# The Ace panel's host command (v2), installed by install.sh as
+# /usr/local/bin/ace. Run "ace help" for its commands.
 #
 # An upgrade runs the target version's own copy of this script (its
-# __upgrade command), so each version brings the steps it needs. Before it
-# changes anything it backs up both databases to /opt/ace/backups (the last
-# 3 stay), and it goes back by itself when the new version is not healthy
-# within 3 minutes. Going back never touches the data: the panel's
-# migrations only expand the schema until a later version contracts it.
+# __upgrade command), so each version brings the steps it needs, its
+# Caddyfile included. Before it changes anything it backs up the database to
+# /opt/ace/backups (the last 3 stay), and it goes back by itself when the
+# new version is not healthy within 3 minutes. Going back never touches the
+# data: the panel's migrations only expand the schema until a later version
+# contracts it. v2 starts on a fresh install: a 1.x panel is never upgraded
+# to 2.x, and a 2.x panel never goes back to 1.x.
 set -euo pipefail
 
 dir=/opt/ace
 repo_raw=https://raw.githubusercontent.com/Kup1ng/ace-install
 health_wait=60 # checks, 3 s apart: 3 minutes
+first_major=2  # this line's major version
+hsts_default=86400 # 1 day, no preload, until the owner settles the certificate plan (Plan §5.7)
 
 say() { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$*" >&2; }
@@ -25,21 +29,25 @@ usage() {
   cat <<'EOF'
 Usage: ace <command>
 
-  status              the panel's containers and its version
-  logs [service...]   follow the logs, e.g. ace logs panel-api
-  version             the installed version
-  restart [service]   restart the panel, or one of its services
-  apply               apply a change to .env: recreates only the services
-                      whose settings changed (MySQL's restart takes the game
-                      servers' database away for a few seconds)
-  upgrade <version>   back up the databases, move the panel to <version>,
-                      and go back by itself if it is not healthy in 3 minutes
-  rollback            go back to the version before the last upgrade; the
-                      data stays as it is
-  help                this help
+  status                   the panel's containers, its version and address
+  logs [service...]        follow the logs, e.g. ace logs panel-api
+  version                  the installed version
+  restart [service]        restart the panel, or one of its services
+  apply                    apply a change to .env: writes the Caddyfile again
+                           and recreates only the services that changed
+  certificate <cert> <key> use your own HTTPS certificate (PEM files: the
+                           certificate with its chain, and its key): checks
+                           them, copies them to /opt/ace/tls, sets ACE_TLS=custom
+                           and restarts Caddy; run it again to renew
+  upgrade <version>        back up the database, move the panel to <version>,
+                           and go back by itself if it is not healthy in 3 minutes
+  rollback                 go back to the version before the last upgrade; the
+                           data stays as it is
+  help                     this help
 
-The panel lives in /opt/ace: compose.yml, .env (version, domain, address),
-Caddyfile, secrets/ (never shown) and backups/ (before each upgrade).
+The panel lives in /opt/ace: compose.yml, .env (version, domain, HTTPS),
+Caddyfile (written from .env), tls/ (your own certificate), secrets/ (never
+shown) and backups/ (before each upgrade).
 EOF
 }
 
@@ -57,6 +65,9 @@ set_setting() {
   chmod 600 "$next"
   mv "$next" "$dir/.env"
 }
+
+# major VERSION prints a version's major number: 2 for 2.0.0-rc.1.
+major() { printf '%s' "${1%%.*}"; }
 
 # fetch VERSION NAME DEST downloads one of ace-install's files of a version.
 fetch() {
@@ -82,23 +93,136 @@ healthy() {
 
 start() { compose up -d --remove-orphans </dev/null; }
 
-# caddy_timeouts gives the Caddyfile of an older install what install.sh
-# writes now: an upload that stalls (a plugin bundle of 80 MB on a slow
-# line) gets 5 minutes before Caddy gives up, instead of Caddy 2.11's 1
-# minute. A Caddyfile that has it, or none, stays as it is.
-caddy_timeouts() {
-  local file="$dir/Caddyfile" next
-  [[ -f "$file" ]] || return 0
-  grep -q 'read_body_idle' "$file" && return 0
-  next="$(mktemp "$dir/Caddyfile.XXXXXX")"
-  if [[ "$(grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$file" | head -1)" == "{" ]]; then
-    # Into the global options block, which the file starts with.
-    awk '{ print } !done && $0 == "{" { print "\tservers {\n\t\ttimeouts {\n\t\t\tread_body_idle 5m\n\t\t}\n\t}"; done = 1 }' "$file" >"$next"
-  else
-    { printf '{\n\tservers {\n\t\ttimeouts {\n\t\t\tread_body_idle 5m\n\t\t}\n\t}\n}\n\n'; cat "$file"; } >"$next"
+# caddyfile prints the production Caddyfile for the settings in .env
+# (Plan §16): one origin for the web app and the API; HSTS with a low
+# max-age and no preload, nosniff, Referrer-Policy and Permissions-Policy on
+# every answer, and a deny-all CSP on /api (HTML gets its CSP with a
+# per-request nonce from the web app). ACE_TLS=custom serves the owner's
+# certificate from /opt/ace/tls; acme lets Caddy get and renew one.
+caddyfile() {
+  local domain email tls hsts
+  domain="$(setting ACE_DOMAIN)"
+  email="$(setting ACE_EMAIL)"
+  tls="$(setting ACE_TLS)"
+  hsts="$(setting ACE_HSTS_MAX_AGE)"
+  hsts="${hsts:-$hsts_default}"
+  [[ "$domain" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || die "ACE_DOMAIN in ${dir}/.env is not a domain name"
+  [[ "$hsts" =~ ^[0-9]{1,9}$ ]] || die "ACE_HSTS_MAX_AGE in ${dir}/.env must be a number of seconds"
+  [[ -z "$email" || "$email" =~ ^[^[:space:]@\"{}]+@[^[:space:]@\"{}]+$ ]] || die "ACE_EMAIL in ${dir}/.env is not an email address"
+  printf '# The Ace panel: one origin for the web app and the API. Written by the\n'
+  printf '# ace command from %s/.env: change .env and run "ace apply" instead of editing it.\n{\n' "$dir"
+  [[ -z "$email" || "${tls:-acme}" != acme ]] || printf '\temail %s\n' "$email"
+  # An upload that stalls (a plugin bundle of 80 MB on a slow line) gets 5
+  # minutes before Caddy gives up, instead of 1.
+  printf '\tservers {\n\t\ttimeouts {\n\t\t\tread_body_idle 5m\n\t\t}\n\t}\n}\n\n'
+  printf '%s {\n' "$domain"
+  case "${tls:-acme}" in
+  acme) ;;
+  custom) printf '\ttls /etc/caddy/tls/cert.pem /etc/caddy/tls/key.pem\n' ;;
+  *) die "ACE_TLS in ${dir}/.env must be acme or custom" ;;
+  esac
+  cat <<EOF
+	encode zstd gzip
+
+	# Every answer (Plan §16). HSTS starts low and without preload, so an
+	# expired certificate during a long cut never locks browsers out for good.
+	header {
+		Strict-Transport-Security "max-age=${hsts}"
+		X-Content-Type-Options nosniff
+		Referrer-Policy same-origin
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+		-Server
+	}
+
+	handle /api/* {
+		# The API answers JSON and files, never a page: nothing may run or frame it.
+		header {
+			Content-Security-Policy "default-src 'none'; frame-ancestors 'none'"
+			defer
+		}
+		reverse_proxy panel-api:8080
+	}
+
+	handle {
+		reverse_proxy panel-web:3000
+	}
+}
+EOF
+}
+
+# render_caddyfile DEST writes the Caddyfile to DEST, or removes DEST and
+# exits when .env holds a bad value.
+render_caddyfile() {
+  if ! (caddyfile) >"$1"; then
+    rm -f "$1"
+    exit 1
   fi
-  chmod --reference="$file" "$next"
-  mv "$next" "$file"
+}
+
+# write_caddyfile writes /opt/ace/Caddyfile from .env in one move, and sets
+# caddy_changed to 1 when its content changed.
+write_caddyfile() {
+  local next
+  caddy_changed=0
+  next="$(mktemp "$dir/Caddyfile.XXXXXX")"
+  render_caddyfile "$next"
+  if cmp -s "$next" "$dir/Caddyfile"; then
+    rm -f "$next"
+    return 0
+  fi
+  chmod 644 "$next"
+  mv "$next" "$dir/Caddyfile"
+  caddy_changed=1
+}
+
+# check_cert CERT KEY DOMAIN checks an owner's certificate: PEM files, the
+# key belongs to the certificate, it names DOMAIN and has not expired. It
+# warns when it expires within 21 days.
+check_cert() {
+  local cert="$1" key="$2" domain="$3"
+  command -v openssl >/dev/null || die "openssl is needed to check the certificate"
+  [[ -r "$cert" && -r "$key" ]] || die "cannot read ${cert} and ${key}"
+  openssl x509 -in "$cert" -noout 2>/dev/null || die "${cert} is not a PEM certificate"
+  openssl pkey -in "$key" -noout 2>/dev/null || die "${key} is not a PEM private key without a passphrase"
+  [[ "$(openssl x509 -in "$cert" -noout -pubkey)" == "$(openssl pkey -in "$key" -pubout)" ]] ||
+    die "the key ${key} does not belong to the certificate ${cert}"
+  [[ "$(openssl x509 -in "$cert" -noout -checkhost "$domain" 2>/dev/null)" == *"does match"* ]] ||
+    die "the certificate ${cert} does not name ${domain}"
+  openssl x509 -in "$cert" -noout -checkend 0 >/dev/null || die "the certificate ${cert} has expired"
+  openssl x509 -in "$cert" -noout -checkend $((21 * 86400)) >/dev/null ||
+    warn "the certificate expires within 21 days ($(openssl x509 -in "$cert" -noout -enddate | cut -d= -f2)); renew it soon"
+}
+
+# tls_files CERT KEY checks an owner's certificate and copies it to
+# /opt/ace/tls, which Caddy reads: the certificate for everyone, the key for
+# root only.
+tls_files() {
+  [[ $# -eq 2 ]] || die "usage: ace certificate <certificate.pem> <key.pem>"
+  check_cert "$1" "$2" "$(setting ACE_DOMAIN)"
+  install -d -m 755 "$dir/tls"
+  install -m 644 "$1" "$dir/tls/cert.pem.new"
+  install -m 600 "$2" "$dir/tls/key.pem.new"
+  mv "$dir/tls/cert.pem.new" "$dir/tls/cert.pem"
+  mv "$dir/tls/key.pem.new" "$dir/tls/key.pem"
+}
+
+# certificate CERT KEY switches the panel to the owner's certificate, or
+# renews it, and restarts Caddy with it.
+certificate() {
+  tls_files "$@"
+  set_setting ACE_TLS custom
+  write_caddyfile
+  compose up -d --force-recreate --no-deps caddy </dev/null || die "Caddy did not start with the certificate (see: ace logs caddy)"
+  say "Caddy serves your certificate for $(setting ACE_DOMAIN); it expires $(openssl x509 -in "$dir/tls/cert.pem" -noout -enddate | cut -d= -f2)"
+}
+
+apply() {
+  write_caddyfile
+  start
+  if [[ "$caddy_changed" == 1 ]]; then
+    compose up -d --force-recreate --no-deps caddy </dev/null
+  fi
+  say "applied ${dir}/.env"
 }
 
 # restore puts back the files of the version before the upgrade.
@@ -107,18 +231,15 @@ restore() {
   [[ ! -f "$dir/rollback/Caddyfile" ]] || cp -p "$dir/rollback/Caddyfile" "$dir/"
 }
 
-# backup FROM TO dumps the panel's database and MySQL into
+# backup FROM TO dumps the panel's database into
 # /opt/ace/backups/<time>-<from>-to-<to>/, for root only, and keeps the
 # last 3 such backups (D29).
 backup() {
   backup_dir="$dir/backups/$(date -u +%Y%m%d-%H%M%S)-$1-to-$2"
   install -d -m 700 "$dir/backups" "$backup_dir"
-  say "Backing up the databases to ${backup_dir}"
+  say "Backing up the database to ${backup_dir}"
   compose exec -T postgres pg_dump -U ace -d ace -Fc </dev/null >"$backup_dir/ace.pgdump" ||
     die "backing up the panel's database failed; nothing changed"
-  # shellcheck disable=SC2016 # expanded in the container
-  compose exec -T mysql sh -c 'MYSQL_PWD="$(cat /run/secrets/mysql_root_password)" exec mysqldump -uroot --all-databases --single-transaction --routines --events --triggers' </dev/null |
-    gzip >"$backup_dir/mysql.sql.gz" || die "backing up MySQL failed; nothing changed"
   chmod 600 "$backup_dir"/*
   find "$dir/backups" -mindepth 1 -maxdepth 1 -type d | sort | head -n -3 | xargs -r rm -rf
 }
@@ -126,9 +247,11 @@ backup() {
 # upgrade VERSION hands the upgrade to that version's own script.
 upgrade() {
   local to="${1:-}" from next
-  [[ "$to" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || die "usage: ace upgrade <version>, e.g. ace upgrade 1.0.1"
+  [[ "$to" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || die "usage: ace upgrade <version>, e.g. ace upgrade 2.0.1"
   from="$(setting ACE_VERSION)"
   [[ "$to" != "$from" ]] || die "the panel already runs ${to}"
+  (($(major "$to") >= first_major)) ||
+    die "this panel runs ${from}; it cannot go back to ${to}, a 1.x version (v2 has its own data). ace rollback goes back to the version before the last upgrade"
   next="$(mktemp)"
   if ! fetch "$to" ace "$next"; then
     rm -f "$next"
@@ -138,7 +261,8 @@ upgrade() {
 }
 
 # do_upgrade VERSION SELF runs in the target version's script: it gets the
-# files and images first, backs up, switches, and goes back on failure.
+# files and images first, backs up, switches, and goes back on failure. It
+# refuses a 1.x panel: v2 starts on a fresh install (D52.2).
 do_upgrade() {
   local to="$1" from
   # Not local: the EXIT trap runs after this function returns.
@@ -146,7 +270,11 @@ do_upgrade() {
   new="$(mktemp -d)"
   trap 'rm -rf "$new" "$self"' EXIT
   from="$(setting ACE_VERSION)"
+  if (($(major "${from:-0}") < first_major)); then
+    die "this panel runs ${from:-an unknown version}, and ${to} starts on a fresh install: nothing carries over from 1.x (v2 has no MySQL and a new database). Install ${to} on a fresh server (install.sh), or stay on the 1.x line (ace upgrade 1.x.y); nothing changed"
+  fi
   fetch "$to" compose.yml "$new/compose.yml" || die "cannot download the stack of ${to}; nothing changed"
+  render_caddyfile "$new/Caddyfile" # this version's Caddyfile, from the same .env
   say "Pulling the images of ${to}"
   ACE_VERSION="$to" docker compose --env-file "$dir/.env" -f "$new/compose.yml" pull </dev/null ||
     die "cannot pull the images of ${to}; nothing changed"
@@ -161,7 +289,7 @@ do_upgrade() {
 
   say "Moving the panel from ${from} to ${to}"
   cp "$new/compose.yml" "$dir/compose.yml"
-  caddy_timeouts
+  install -m 644 "$new/Caddyfile" "$dir/Caddyfile"
   set_setting ACE_VERSION "$to"
   if start && healthy "$to"; then
     install -m 755 "$self" /usr/local/bin/ace
@@ -174,7 +302,7 @@ do_upgrade() {
     rm -rf "$dir/rollback"
     die "the upgrade to ${to} failed, and the panel runs ${from} again; see why with: ace logs panel-api"
   fi
-  die "the upgrade failed, and ${from} is not healthy either; the databases as they were are in ${backup_dir}"
+  die "the upgrade failed, and ${from} is not healthy either; the database as it was is in ${backup_dir}"
 }
 
 rollback() {
@@ -192,14 +320,25 @@ rollback() {
 }
 
 main() {
-  [[ $EUID -eq 0 ]] || die "run as root"
-  [[ -f "$dir/compose.yml" ]] || die "the Ace panel is not installed in ${dir}"
   local cmd="${1:-help}"
   [[ $# -eq 0 ]] || shift
   case "$cmd" in
+  help | -h | --help)
+    usage
+    return 0
+    ;;
+  __check-cert)
+    # install.sh checks an owner's certificate before it changes anything.
+    check_cert "$@"
+    return 0
+    ;;
+  esac
+  [[ $EUID -eq 0 ]] || die "run as root"
+  [[ -f "$dir/compose.yml" ]] || die "the Ace panel is not installed in ${dir}"
+  case "$cmd" in
   status)
     compose ps
-    printf '\nversion %s at https://%s\n' "$(setting ACE_VERSION)" "$(setting ACE_DOMAIN)"
+    printf '\nversion %s at https://%s (HTTPS: %s)\n' "$(setting ACE_VERSION)" "$(setting ACE_DOMAIN)" "$(setting ACE_TLS)"
     ;;
   logs) compose logs --tail=200 -f "$@" ;;
   version) setting ACE_VERSION ;;
@@ -207,14 +346,13 @@ main() {
     compose restart "$@"
     say "restarted ${1:-the panel}"
     ;;
-  apply)
-    compose up -d
-    say "applied ${dir}/.env"
-    ;;
+  apply) apply ;;
+  certificate) certificate "$@" ;;
   upgrade) upgrade "$@" ;;
-  __upgrade) do_upgrade "$@" ;;
   rollback) rollback ;;
-  help | -h | --help) usage ;;
+  __upgrade) do_upgrade "$@" ;;
+  __caddyfile) write_caddyfile ;; # install.sh, once .env is written
+  __tls-files) tls_files "$@" ;;  # install.sh, for ACE_TLS=custom
   *)
     usage >&2
     die "unknown command: ${cmd}"
