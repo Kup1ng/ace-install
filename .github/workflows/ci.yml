@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, m15-install-v2]
   pull_request:
 
 permissions:
@@ -15,24 +15,33 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: shellcheck
-        run: shellcheck -x install.sh ace test/ace.sh
+        run: shellcheck -x install.sh ace test/ace.sh test/install.sh
       - name: bash -n
         run: |
           bash -n install.sh
           bash -n ace
           bash -n test/ace.sh
+          bash -n test/install.sh
       - name: The stack's file is valid
         env:
           ACE_VERSION: 0.0.0
-          ACE_PUBLIC_IP: 203.0.113.10
+          ACE_DOMAIN: panel.example.test
         run: |
-          mkdir -p secrets && touch secrets/api.env
+          mkdir -p secrets tls && touch secrets/api.env Caddyfile
           docker compose -f compose.yml config --quiet
       - name: VERSION is a version
-        run: grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+' VERSION
+        run: grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?' VERSION
+
+  install:
+    name: install.sh resolves versions (dry run)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: test/install.sh
+        run: bash test/install.sh
 
   ace:
-    name: ace upgrade and rollback (against stubs)
+    name: ace upgrade, rollback, apply and certificate (against stubs)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
