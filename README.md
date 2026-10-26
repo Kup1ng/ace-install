@@ -1,5 +1,7 @@
 # ace-install
 
+> **This is the frozen v1 installer (Ace 1.1.0).** It installs v1 only. The current installer is on `main`.
+
 The installer of the **Ace** panel (CS2 hosting) and its `ace` command. This repository holds scripts only: no code and no secrets. The panel's images are private on GHCR, so an install needs a GitHub token that may read them.
 
 ## Install
@@ -7,7 +9,7 @@ The installer of the **Ace** panel (CS2 hosting) and its `ace` command. This rep
 On a fresh server running **Ubuntu 24.04 or 22.04** (x86_64), as root:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Kup1ng/ace-install/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Kup1ng/ace-install/v1/install.sh | bash
 ```
 
 Before you start:

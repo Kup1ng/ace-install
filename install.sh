@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Ace panel installer. Run it as root on Ubuntu 22.04 or 24.04:
 #
-#   curl -fsSL https://raw.githubusercontent.com/Kup1ng/ace-install/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/Kup1ng/ace-install/v1/install.sh | bash
 #
 # It checks the server, installs Docker when it is missing or older than 25,
 # asks for the panel's domain, a GHCR token and the Owner's name, makes the
@@ -268,7 +268,7 @@ main() {
   trap 'rm -rf "$tmp"' EXIT
 
   if [[ -z "${ACE_VERSION:-}" ]]; then
-    ACE_VERSION="$(curl -fsSL --retry 3 --connect-timeout 15 "${curl_proxy[@]}" "${repo_raw}/main/VERSION" | tr -d '[:space:]')" ||
+    ACE_VERSION="$(curl -fsSL --retry 3 --connect-timeout 15 "${curl_proxy[@]}" "${repo_raw}/v1/VERSION" | tr -d '[:space:]')" ||
       die "cannot read the current version from ace-install${proxy:+ through the proxy}"
   fi
   [[ "$ACE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || die "ACE_VERSION must be a version such as 1.0.0"
