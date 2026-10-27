@@ -20,7 +20,9 @@
 #                          from ACE_TLS_CERT (PEM, with its chain) and
 #                          ACE_TLS_KEY (PEM key), renewed with `ace certificate`
 #   ACE_PROXY=<url>        http:// or socks5:// proxy for apt and Docker;
-#                          Docker keeps pulling through it
+#                          Docker keeps pulling through it. The URL may hold
+#                          a password: it goes into root-only files and
+#                          environments, never onto a command line
 #   ACE_APT_MIRROR=<url>   mirror of the Ubuntu archive, for this install only
 #   ACE_ANY_OS=1           try a system other than Ubuntu 22.04/24.04 (unsupported)
 #   ACE_INSTALL_REF=<ref>  the branch or tag of ace-install to take the files
@@ -130,11 +132,26 @@ public_ip() {
 # --- Docker -------------------------------------------------------------
 
 apt_opts=(-y -q -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
-curl_proxy=()
-if [[ -n "$proxy" ]]; then
-  apt_opts+=(-o "Acquire::http::Proxy=${proxy}" -o "Acquire::https::Proxy=${proxy}")
-  curl_proxy=(-x "$proxy")
-fi
+
+# download ARGS... runs curl, through ACE_PROXY when it is set. curl reads
+# the proxy from its environment, which only root can see: on its command
+# line (-x) every user of the server could read the proxy's password.
+download() {
+  if [[ -n "$proxy" ]]; then
+    https_proxy="$proxy" HTTPS_PROXY="$proxy" curl "$@"
+  else
+    curl "$@"
+  fi
+}
+
+# apt_proxy points apt at ACE_PROXY, when it is set, through a file of
+# root's: apt's command line is anyone's to read, and apt keeps it in its
+# history.log.
+apt_proxy() {
+  [[ -n "$proxy" ]] || return 0
+  (umask 077 && printf 'Acquire::http::Proxy "%s";\nAcquire::https::Proxy "%s";\n' "$proxy" "$proxy" >"$tmp/apt-proxy.conf")
+  apt_opts+=(-c "$tmp/apt-proxy.conf")
+}
 
 docker_major() {
   local v
@@ -149,11 +166,12 @@ install_docker() {
   [[ "$os_id" == debian ]] && repo_os=debian
   export DEBIAN_FRONTEND=noninteractive
   install -m 0755 -d /etc/apt/keyrings
-  curl -fsSL --retry 3 --connect-timeout 15 "${curl_proxy[@]}" "https://download.docker.com/linux/${repo_os}/gpg" \
+  download -fsSL --retry 3 --connect-timeout 15 "https://download.docker.com/linux/${repo_os}/gpg" \
     -o /etc/apt/keyrings/docker.asc || die "cannot download Docker's signing key${proxy:+ through the proxy}"
   chmod a+r /etc/apt/keyrings/docker.asc
   printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/%s %s stable\n' \
     "$(dpkg --print-architecture)" "$repo_os" "$os_codename" >/etc/apt/sources.list.d/docker.list
+  apt_proxy
   if [[ -n "$mirror" ]]; then
     # This install reads the archive from the mirror; the server's own
     # sources stay as they are.
@@ -201,22 +219,42 @@ ensure_docker() {
   docker compose version >/dev/null 2>&1 || die "Docker Compose v2 is needed (the docker-compose-plugin package)"
 }
 
+# docker_dropins is the directory of Docker's systemd drop-ins (test/install.sh
+# points it elsewhere).
+docker_dropins=/etc/systemd/system/docker.service.d
+
 # docker_proxy makes Docker pull through ACE_PROXY, for good: upgrades pull
-# too. Without ACE_PROXY an earlier setting stays.
+# too. Without ACE_PROXY an earlier setting stays. The URL may hold a
+# password, so it lives in a root-only EnvironmentFile: systemd shows every
+# user a unit's Environment= lines (systemctl show docker), and of an
+# EnvironmentFile only its path. The 1.x installer put the URL in
+# Environment=; such a drop-in moves to the file.
 docker_proxy() {
-  local dropin=/etc/systemd/system/docker.service.d/ace-proxy.conf want
-  if [[ -z "$proxy" ]]; then
-    [[ ! -f "$dropin" ]] || say "Docker still pulls through the proxy in ${dropin}"
+  local dropin="$docker_dropins/ace-proxy.conf" env="$docker_dropins/ace-proxy.env" url="$proxy" want_unit want_env
+  if [[ -z "$url" ]]; then
+    [[ -f "$dropin" ]] || return 0
+    # systemd reads % there as a specifier, so 1.x wrote %% for each %.
+    url="$(sed -n 's/^Environment="HTTP_PROXY=\([^"]*\)".*/\1/p' "$dropin")"
+    url="${url//%%/%}"
+    if ! [[ "$url" =~ ^(https?|socks5h?):// && "$url" =~ $url_chars ]]; then
+      say "Docker still pulls through the proxy of ${dropin}"
+      return 0
+    fi
+  fi
+  want_unit="$(printf '# Written by the Ace installer: Docker pulls through the proxy in a root-only file.\n[Service]\nEnvironmentFile=%s' "$env")"
+  # Single quotes: systemd takes the URL as it is, with no specifier or escape.
+  want_env="$(printf "HTTP_PROXY='%s'\nHTTPS_PROXY='%s'\nNO_PROXY=localhost,127.0.0.0/8,::1" "$url" "$url")"
+  if [[ "$(cat "$dropin" 2>/dev/null)" == "$want_unit" && "$(cat "$env" 2>/dev/null)" == "$want_env" ]]; then
+    chmod 600 "$env"
     return 0
   fi
-  # systemd reads % as a specifier, so a percent-encoded password needs %%.
-  want="$(printf '# Written by the Ace installer: Docker pulls through this proxy.\n[Service]\nEnvironment="HTTP_PROXY=%s" "HTTPS_PROXY=%s" "NO_PROXY=localhost,127.0.0.0/8,::1"' \
-    "${proxy//%/%%}" "${proxy//%/%%}")"
-  [[ "$(cat "$dropin" 2>/dev/null)" == "$want" ]] && return 0
-  say "Docker pulls through the proxy from now on (${dropin}); Docker restarts"
-  mkdir -p "${dropin%/*}"
-  printf '%s\n' "$want" >"$dropin"
-  chmod 600 "$dropin"
+  say "Docker pulls through the proxy from now on (${env}, root's only); Docker restarts"
+  mkdir -p "$docker_dropins"
+  # The file is never readable by others, not even for a moment.
+  (umask 077 && printf '%s\n' "$want_env" >"$tmp/ace-proxy.env")
+  install -m 600 "$tmp/ace-proxy.env" "$env"
+  printf '%s\n' "$want_unit" >"$dropin"
+  chmod 644 "$dropin"
   systemctl daemon-reload
   systemctl restart docker || die "Docker does not start with the proxy (journalctl -u docker)"
 }
@@ -225,7 +263,7 @@ docker_proxy() {
 
 # fetch NAME DEST downloads one of ace-install's files at the install's ref.
 fetch() {
-  curl -fsSL --retry 3 --connect-timeout 15 "${curl_proxy[@]}" "${repo_raw}/${ref}/$1" -o "$2" ||
+  download -fsSL --retry 3 --connect-timeout 15 "${repo_raw}/${ref}/$1" -o "$2" ||
     die "cannot download $1 from ace-install (${ref})${proxy:+ through the proxy}"
 }
 
@@ -258,7 +296,7 @@ make_secrets() {
 resolve_version() {
   local from="${ACE_INSTALL_REF:-main}"
   if [[ -z "${ACE_VERSION:-}" ]]; then
-    ACE_VERSION="$(curl -fsSL --retry 3 --connect-timeout 15 "${curl_proxy[@]}" "${repo_raw}/${from}/VERSION" | tr -d '[:space:]')" ||
+    ACE_VERSION="$(download -fsSL --retry 3 --connect-timeout 15 "${repo_raw}/${from}/VERSION" | tr -d '[:space:]')" ||
       die "cannot read the current version from ace-install (${from})${proxy:+ through the proxy}"
   fi
   [[ "$ACE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || die "ACE_VERSION must be a version such as 2.0.0, not ${ACE_VERSION}"
@@ -398,4 +436,7 @@ main() {
   say "On this server: ace status, ace logs, ace upgrade <version>"
 }
 
-main "$@"
+# Sourced, as test/install.sh does, the script only defines its functions.
+if [[ -z "${BASH_SOURCE[0]:-}" || "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
