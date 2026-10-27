@@ -47,7 +47,7 @@ Set them before `bash`, e.g. `... | ACE_TLS=custom ACE_TLS_CERT=/root/panel.pem 
 | `ACE_DOMAIN`, `ACE_GHCR_USER`, `ACE_GHCR_TOKEN`, `ACE_OWNER` | The answers, so the install asks nothing. |
 | `ACE_TLS`, `ACE_EMAIL` | `acme` or `custom` (above); for `acme`, an optional email for Let's Encrypt's notices. |
 | `ACE_TLS_CERT`, `ACE_TLS_KEY` | For `custom`: the certificate (with its chain) and its key, as PEM files. They are copied to `/opt/ace/tls`. |
-| `ACE_PROXY` | An `http://` or `socks5://` proxy for apt and Docker on a server that cannot reach them directly. Docker keeps pulling through it (upgrades too). |
+| `ACE_PROXY` | An `http://` or `socks5://` proxy for apt and Docker on a server that cannot reach them directly. Docker keeps pulling through it (upgrades too). Its URL may hold a password, so other users of the server never see it: curl gets it in its environment and apt in a root-only file, never on a command line, and Docker reads it from a root-only `EnvironmentFile` (below), not from its unit's `Environment=`, which `systemctl show docker` shows everyone. |
 | `ACE_APT_MIRROR` | A mirror of the Ubuntu archive, e.g. `http://mirror.arvancloud.ir/ubuntu`, for this install only; the server's own sources stay. |
 | `ACE_ANY_OS=1` | Try a system other than Ubuntu 22.04/24.04. Unsupported. |
 | `ACE_INSTALL_REF` | Take this repository's files (and the default version) from another branch or tag, e.g. `m15-install-v2` before 2.0.0 is released. |
@@ -87,6 +87,7 @@ An upgrade runs the target version's own `ace` from this repository's tag, so ea
 | `/opt/ace/secrets/` | The master key and the database password (mode 700; never shown) |
 | `/opt/ace/backups/` | The database as it was before each of the last 3 upgrades (root only, no password) |
 | `/opt/ace/rollback/` | The files of the version before the last upgrade (`compose.yml`, `.env`, `Caddyfile`, `ace`), for `ace rollback` |
+| `/etc/systemd/system/docker.service.d/ace-proxy.conf` | With `ACE_PROXY`: the drop-in that points Docker at `ace-proxy.env` next to it, which holds the proxy (root only). A 1.x drop-in with the proxy in `Environment=` moves there on install |
 
 Every image comes from GHCR with the panel's version, PostgreSQL and Caddy included: each release copies them there, so one version is one known set of images.
 
@@ -99,7 +100,7 @@ Optional settings in `/opt/ace/.env`; after a change run `ace apply`:
 | `ACE_HSTS_MAX_AGE` | `86400` (1 day) | HSTS's `max-age` in seconds, without `preload`. Raise it once the certificate plan is settled. |
 | `ACE_EMAIL` | none | For `ACE_TLS=acme`: the email Let's Encrypt sends its notices to. |
 | `ACE_TLS` | `acme` | `acme` or `custom`; switch to `custom` with `ace certificate`. |
-| `ACE_PROXY` | none | The proxy `ace` downloads this repository's files through (the installer's `ACE_PROXY`). |
+| `ACE_PROXY` | none | The proxy `ace` downloads this repository's files through (the installer's `ACE_PROXY`), handed to curl in its environment, never on its command line. |
 
 ## Versions
 
@@ -109,8 +110,8 @@ Optional settings in `/opt/ace/.env`; after a change run `ace apply`:
 
 CI runs shellcheck and `bash -n` on the scripts, `docker compose config` on the stack, and two tests:
 
-- [`test/install.sh`](test/install.sh) runs `install.sh` with `ACE_DRY_RUN=1` against a stub `curl`: an explicit version, the `VERSION` of `main` and of a branch, prereleases, the refusal of 1.x and malformed versions, a version without a tag, and bad options. It changes nothing and needs no root: `bash test/install.sh`.
-- [`test/ace.sh`](test/ace.sh) runs `ace` against stub `docker` and `curl`: the Caddyfile (headers, HSTS, TLS), a good upgrade, a rollback, an upgrade that goes back by itself, the refusals (a 1.x target, a 1.x panel), the last 3 backups, `ace apply`, `ace certificate`, and no temporary file left. It writes `/opt/ace`, so it runs in CI or a throwaway container only:
+- [`test/install.sh`](test/install.sh) runs `install.sh` with `ACE_DRY_RUN=1` against a stub `curl`: an explicit version, the `VERSION` of `main` and of a branch, prereleases, the refusal of 1.x and malformed versions, a version without a tag, bad options, and that `ACE_PROXY` reaches curl in its environment, never on its command line. It also sources `install.sh` (which then only defines its functions) to check that apt gets the proxy from a root-only file and that Docker's goes into a root-only `EnvironmentFile`, never into its unit, a 1.x drop-in included, against a stub `systemctl`. It changes nothing and needs no root: `bash test/install.sh`.
+- [`test/ace.sh`](test/ace.sh) runs `ace` against stub `docker` and `curl`: the Caddyfile (headers, HSTS, TLS), a good upgrade, a rollback, an upgrade that goes back by itself, the refusals (a 1.x target, a 1.x panel), the last 3 backups, `ace apply`, `ace certificate`, `ACE_PROXY` kept off curl's command line, and no temporary file left. It writes `/opt/ace`, so it runs in CI or a throwaway container only:
 
 ```bash
 docker run --rm -v "$PWD:/src:ro" ubuntu:24.04 bash -c 'apt-get update -qq && apt-get install -y -qq openssl >/dev/null && bash /src/test/ace.sh'
