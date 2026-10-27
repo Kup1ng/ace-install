@@ -217,6 +217,13 @@ expect 0
 [[ -z "$out" ]] || fail "docker_proxy said: ${out}"
 expect_proxied ""
 
+echo "the same proxy again makes a loose file root's only, restarting nothing"
+chmod 644 "$dropins/ace-proxy.env"
+installer "$proxy_url" docker
+expect 0
+[[ -z "$out" ]] || fail "docker_proxy said: ${out}"
+expect_proxied ""
+
 echo "no proxy: Docker keeps the one it has"
 installer "" docker
 expect 0 "Docker still pulls through the proxy"

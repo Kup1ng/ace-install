@@ -212,7 +212,7 @@ docker_proxy() {
   want_unit="$(printf '# Written by the Ace installer: Docker pulls through the proxy in a root-only file.\n[Service]\nEnvironmentFile=%s' "$env")"
   # Single quotes: systemd takes the URL as it is, with no specifier or escape.
   want_env="$(printf "HTTP_PROXY='%s'\nHTTPS_PROXY='%s'\nNO_PROXY=localhost,127.0.0.0/8,::1" "$proxy" "$proxy")"
-  [[ "$(cat "$dropin" 2>/dev/null)" == "$want_unit" && "$(cat "$env" 2>/dev/null)" == "$want_env" ]] && return 0
+  [[ "$(cat "$dropin" 2>/dev/null)" == "$want_unit" && "$(cat "$env" 2>/dev/null)" == "$want_env" ]] && { chmod 600 "$env"; return 0; }
   say "Docker pulls through the proxy from now on (${env}, root's only); Docker restarts"
   mkdir -p "$docker_dropins"
   install -m 600 /dev/null "$env" # root's only before it holds the URL
