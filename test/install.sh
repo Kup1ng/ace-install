@@ -5,10 +5,12 @@
 # $state/VERSION.<ref>. It covers an explicit version, the VERSION of main
 # and of ACE_INSTALL_REF, prereleases of the 2.x line, the refusal of 1.x
 # versions and of malformed ones, a version ace-install has no tag for, bad
-# options, and that ACE_PROXY reaches curl through its environment, never its
-# command line. It also sources install.sh to check docker_proxy against a
-# stub systemctl: Docker's proxy goes into a root-only EnvironmentFile, never
-# into the unit's Environment=, which every user can read. No root needed:
+# options, that it runs when piped into bash, and that ACE_PROXY reaches curl
+# through its environment, never its command line. It also sources install.sh
+# to check apt_proxy and docker_proxy against a stub systemctl: apt reads the
+# proxy from a root-only file, and Docker's goes into a root-only
+# EnvironmentFile, never into the unit's Environment=, which every user can
+# read. No root needed:
 #
 #   bash test/install.sh
 set -euo pipefail
@@ -124,6 +126,13 @@ dry ACE_VERSION=2.0.0 ACE_TLS=letsencrypt
 expect 1 "ACE_TLS must be acme or custom"
 dry ACE_VERSION=2.0.0 ACE_PROXY=ftp://proxy.example.test
 expect 1 "ACE_PROXY must be"
+
+echo "piped into bash, as the install command runs it, it runs main"
+set +e
+out="$(env -u ACE_VERSION -u ACE_INSTALL_REF -u ACE_TLS -u ACE_PROXY ACE_DRY_RUN=1 bash <"$src/install.sh" 2>&1)"
+code=$?
+set -e
+expect 0 $'version=2.0.1\nref=v2.0.1'
 
 # A proxy whose URL holds an (obviously fake) password, percent-encoded.
 proxy_url='http://ace:fake%2Fpassword@proxy.example.test:3128'
