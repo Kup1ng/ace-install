@@ -87,7 +87,7 @@ An upgrade runs the target version's own `ace` from this repository's tag, so ea
 | `/opt/ace/secrets/` | The master key and the database password (mode 700; never shown) |
 | `/opt/ace/backups/` | The database as it was before each of the last 3 upgrades (root only, no password) |
 | `/opt/ace/rollback/` | The files of the version before the last upgrade (`compose.yml`, `.env`, `Caddyfile`, `ace`), for `ace rollback` |
-| `/etc/systemd/system/docker.service.d/ace-proxy.conf` | With `ACE_PROXY`: the drop-in that points Docker at `ace-proxy.env` next to it, which holds the proxy (root only). A 1.x drop-in with the proxy in `Environment=` moves there on install |
+| `/etc/systemd/system/docker.service.d/ace-proxy.conf` | With `ACE_PROXY`: the drop-in that points Docker at `ace-proxy.env` next to it, which holds the proxy (root only). An install with `ACE_PROXY` rewrites both, so a drop-in with the proxy in `Environment=` (as 1.x wrote it) goes away |
 
 Every image comes from GHCR with the panel's version, PostgreSQL and Caddy included: each release copies them there, so one version is one known set of images.
 
@@ -110,7 +110,7 @@ Optional settings in `/opt/ace/.env`; after a change run `ace apply`:
 
 CI runs shellcheck and `bash -n` on the scripts, `docker compose config` on the stack, and two tests:
 
-- [`test/install.sh`](test/install.sh) runs `install.sh` with `ACE_DRY_RUN=1` against a stub `curl`: an explicit version, the `VERSION` of `main` and of a branch, prereleases, the refusal of 1.x and malformed versions, a version without a tag, bad options, and that `ACE_PROXY` reaches curl in its environment, never on its command line. It also sources `install.sh` (which then only defines its functions) to check that apt gets the proxy from a root-only file and that Docker's goes into a root-only `EnvironmentFile`, never into its unit, a 1.x drop-in included, against a stub `systemctl`. It changes nothing and needs no root: `bash test/install.sh`.
+- [`test/install.sh`](test/install.sh) runs `install.sh` with `ACE_DRY_RUN=1` against a stub `curl`: an explicit version, the `VERSION` of `main` and of a branch, prereleases, the refusal of 1.x and malformed versions, a version without a tag, bad options, that it runs when piped into `bash` (as the install command runs it), and that `ACE_PROXY` reaches curl in its environment, never on its command line. It also sources `install.sh` (which then only defines its functions) to check that apt gets the proxy from a root-only file and that Docker's goes into a root-only `EnvironmentFile`, never into its unit (an old drop-in with `Environment=` and a loose file included), against a stub `systemctl`. It changes nothing and needs no root: `bash test/install.sh`.
 - [`test/ace.sh`](test/ace.sh) runs `ace` against stub `docker` and `curl`: the Caddyfile (headers, HSTS, TLS), a good upgrade, a rollback, an upgrade that goes back by itself, the refusals (a 1.x target, a 1.x panel), the last 3 backups, `ace apply`, `ace certificate`, `ACE_PROXY` kept off curl's command line, and no temporary file left. It writes `/opt/ace`, so it runs in CI or a throwaway container only:
 
 ```bash

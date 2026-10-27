@@ -10,36 +10,27 @@
 # once, and adds the `ace` command. v2 installs only on a server without a
 # panel: nothing carries over from 1.x (D52.2).
 #
-# Optional, in the environment:
-#   ACE_VERSION=<x.y.z>    the version to install, 2.0.0 or later (default:
-#                          the VERSION file of ACE_INSTALL_REF, else main)
-#   ACE_DOMAIN, ACE_EMAIL, ACE_GHCR_USER, ACE_GHCR_TOKEN, ACE_OWNER
-#                          answers, so the install asks nothing
-#   ACE_TLS=acme|custom    acme (default): Caddy gets and renews a Let's
-#                          Encrypt certificate; custom: your own certificate,
-#                          from ACE_TLS_CERT (PEM, with its chain) and
-#                          ACE_TLS_KEY (PEM key), renewed with `ace certificate`
-#   ACE_PROXY=<url>        http:// or socks5:// proxy for apt and Docker;
-#                          Docker keeps pulling through it. The URL may hold
-#                          a password: it goes into root-only files and
-#                          environments, never onto a command line
+# Optional, in the environment (the README explains each one):
+#   ACE_VERSION=<x.y.z>    the version, 2.0.0 or later (default: the VERSION
+#                          file of ACE_INSTALL_REF, else main)
+#   ACE_DOMAIN, ACE_EMAIL, ACE_GHCR_USER, ACE_GHCR_TOKEN, ACE_OWNER: answers
+#   ACE_TLS=acme|custom    acme (default): Let's Encrypt, renewed by Caddy;
+#                          custom: ACE_TLS_CERT and ACE_TLS_KEY (PEM files)
+#   ACE_PROXY=<url>        http:// or socks5:// proxy for apt and Docker (for
+#                          good); root-only files, never a command line
 #   ACE_APT_MIRROR=<url>   mirror of the Ubuntu archive, for this install only
 #   ACE_ANY_OS=1           try a system other than Ubuntu 22.04/24.04 (unsupported)
-#   ACE_INSTALL_REF=<ref>  the branch or tag of ace-install to take the files
-#                          from (default: v<version>)
-#   ACE_DRY_RUN=1          only resolve the version and check that ace-install
-#                          has its files; change nothing (no root needed)
+#   ACE_INSTALL_REF=<ref>  the ace-install ref to take the files from (default: v<version>)
+#   ACE_DRY_RUN=1          only resolve the version and check the files; change nothing
 set -euo pipefail
 
 say() { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$*" >&2; }
-die() {
-  printf '\033[1;31merror:\033[0m %s\n' "$*" >&2
-  exit 1
-}
+die() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
 repo_raw=https://raw.githubusercontent.com/Kup1ng/ace-install
 dir=/opt/ace
+docker_dropins=/etc/systemd/system/docker.service.d # test/install.sh moves it
 proxy="${ACE_PROXY:-}"
 mirror="${ACE_APT_MIRROR:-}"
 url_chars='^[][A-Za-z0-9._~:/?#@!$&()*+,;=%-]+$'
@@ -133,20 +124,12 @@ public_ip() {
 
 apt_opts=(-y -q -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
 
-# download ARGS... runs curl, through ACE_PROXY when it is set. curl reads
-# the proxy from its environment, which only root can see: on its command
-# line (-x) every user of the server could read the proxy's password.
-download() {
-  if [[ -n "$proxy" ]]; then
-    https_proxy="$proxy" HTTPS_PROXY="$proxy" curl "$@"
-  else
-    curl "$@"
-  fi
-}
+# download ARGS... runs curl, which gets ACE_PROXY in its root-only
+# environment: on its command line (-x) every user could read the password.
+download() { if [[ -n "$proxy" ]]; then https_proxy="$proxy" HTTPS_PROXY="$proxy" curl "$@"; else curl "$@"; fi; }
 
-# apt_proxy points apt at ACE_PROXY, when it is set, through a file of
-# root's: apt's command line is anyone's to read, and apt keeps it in its
-# history.log.
+# apt_proxy hands apt ACE_PROXY in a root-only file, not on its command
+# line, which every user can read (and history.log keeps).
 apt_proxy() {
   [[ -n "$proxy" ]] || return 0
   (umask 077 && printf 'Acquire::http::Proxy "%s";\nAcquire::https::Proxy "%s";\n' "$proxy" "$proxy" >"$tmp/apt-proxy.conf")
@@ -186,9 +169,7 @@ install_docker() {
   for p in docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc; do
     if [[ "$(dpkg-query -W -f '${Status}' "$p" 2>/dev/null)" == "install ok installed" ]]; then old+=("$p"); fi
   done
-  if ((${#old[@]})); then
-    apt-get "${apt_opts[@]}" remove "${old[@]}" </dev/null || die "cannot remove Ubuntu's Docker packages: ${old[*]}"
-  fi
+  if ((${#old[@]})); then apt-get "${apt_opts[@]}" remove "${old[@]}" </dev/null || die "cannot remove Ubuntu's Docker packages: ${old[*]}"; fi
   apt-get "${apt_opts[@]}" install --no-install-recommends \
     docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin </dev/null ||
     die "installing Docker failed${mirror:+ (is the mirror reachable?)}${proxy:+ (is the proxy reachable?)}"
@@ -219,42 +200,24 @@ ensure_docker() {
   docker compose version >/dev/null 2>&1 || die "Docker Compose v2 is needed (the docker-compose-plugin package)"
 }
 
-# docker_dropins is the directory of Docker's systemd drop-ins (test/install.sh
-# points it elsewhere).
-docker_dropins=/etc/systemd/system/docker.service.d
-
-# docker_proxy makes Docker pull through ACE_PROXY, for good: upgrades pull
-# too. Without ACE_PROXY an earlier setting stays. The URL may hold a
-# password, so it lives in a root-only EnvironmentFile: systemd shows every
-# user a unit's Environment= lines (systemctl show docker), and of an
-# EnvironmentFile only its path. The 1.x installer put the URL in
-# Environment=; such a drop-in moves to the file.
+# docker_proxy makes Docker pull through ACE_PROXY for good (upgrades too);
+# without it an earlier setting stays. The URL goes into a root-only file the
+# drop-in names: systemctl show docker prints Environment= to every user.
 docker_proxy() {
-  local dropin="$docker_dropins/ace-proxy.conf" env="$docker_dropins/ace-proxy.env" url="$proxy" want_unit want_env
-  if [[ -z "$url" ]]; then
-    [[ -f "$dropin" ]] || return 0
-    # systemd reads % there as a specifier, so 1.x wrote %% for each %.
-    url="$(sed -n 's/^Environment="HTTP_PROXY=\([^"]*\)".*/\1/p' "$dropin")"
-    url="${url//%%/%}"
-    if ! [[ "$url" =~ ^(https?|socks5h?):// && "$url" =~ $url_chars ]]; then
-      say "Docker still pulls through the proxy of ${dropin}"
-      return 0
-    fi
+  local dropin="$docker_dropins/ace-proxy.conf" env="$docker_dropins/ace-proxy.env" want_unit want_env
+  if [[ -z "$proxy" ]]; then
+    [[ ! -f "$dropin" ]] || say "Docker still pulls through the proxy of ${dropin}"
+    return 0
   fi
   want_unit="$(printf '# Written by the Ace installer: Docker pulls through the proxy in a root-only file.\n[Service]\nEnvironmentFile=%s' "$env")"
   # Single quotes: systemd takes the URL as it is, with no specifier or escape.
-  want_env="$(printf "HTTP_PROXY='%s'\nHTTPS_PROXY='%s'\nNO_PROXY=localhost,127.0.0.0/8,::1" "$url" "$url")"
-  if [[ "$(cat "$dropin" 2>/dev/null)" == "$want_unit" && "$(cat "$env" 2>/dev/null)" == "$want_env" ]]; then
-    chmod 600 "$env"
-    return 0
-  fi
+  want_env="$(printf "HTTP_PROXY='%s'\nHTTPS_PROXY='%s'\nNO_PROXY=localhost,127.0.0.0/8,::1" "$proxy" "$proxy")"
+  [[ "$(cat "$dropin" 2>/dev/null)" == "$want_unit" && "$(cat "$env" 2>/dev/null)" == "$want_env" ]] && return 0
   say "Docker pulls through the proxy from now on (${env}, root's only); Docker restarts"
   mkdir -p "$docker_dropins"
-  # The file is never readable by others, not even for a moment.
-  (umask 077 && printf '%s\n' "$want_env" >"$tmp/ace-proxy.env")
-  install -m 600 "$tmp/ace-proxy.env" "$env"
+  install -m 600 /dev/null "$env" # root's only before it holds the URL
+  printf '%s\n' "$want_env" >"$env"
   printf '%s\n' "$want_unit" >"$dropin"
-  chmod 644 "$dropin"
   systemctl daemon-reload
   systemctl restart docker || die "Docker does not start with the proxy (journalctl -u docker)"
 }
@@ -344,9 +307,8 @@ wait_healthy() {
   return 1
 }
 
-# main runs the install. Wrapped in a function, the whole script is read
-# before anything runs, so no command can read the rest of it from stdin
-# (curl ... | bash).
+# main runs the install. Wrapped in a function, the whole script is read before
+# anything runs, so no command can read the rest of it from stdin (curl | bash).
 main() {
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' EXIT
@@ -401,9 +363,7 @@ main() {
     if [[ -n "${ACE_EMAIL:-}" ]]; then printf 'ACE_EMAIL=%s\n' "$ACE_EMAIL" >>"$dir/.env"; fi
     if [[ -n "$proxy" ]]; then printf 'ACE_PROXY=%s\n' "$proxy" >>"$dir/.env"; fi
   )
-  if [[ "$ACE_TLS" == custom ]]; then
-    ace __tls-files "$ACE_TLS_CERT" "$ACE_TLS_KEY"
-  fi
+  if [[ "$ACE_TLS" == custom ]]; then ace __tls-files "$ACE_TLS_CERT" "$ACE_TLS_KEY"; fi
   ace __caddyfile
 
   say "Pulling the panel's images"
@@ -429,14 +389,9 @@ main() {
   say "Done: the Ace panel ${ACE_VERSION} runs at https://${ACE_DOMAIN}"
   printf '\n    Owner:    %s\n    Password: %s\n\n' "$ACE_OWNER" "$password"
   say "The password is shown only now; change it in the panel after signing in"
-  if [[ "$ACE_TLS" == custom ]]; then
-    say "Your certificate expires $(openssl x509 -in "$dir/tls/cert.pem" -noout -enddate | cut -d= -f2); renew it with: ace certificate <cert.pem> <key.pem>"
-  fi
+  if [[ "$ACE_TLS" == custom ]]; then say "Your certificate expires $(openssl x509 -in "$dir/tls/cert.pem" -noout -enddate | cut -d= -f2); renew it with: ace certificate <cert.pem> <key.pem>"; fi
   say "Nodes accept their panel's address only: on a node that moves to this panel, run ace-node panel-ip ${ACE_PUBLIC_IP}"
   say "On this server: ace status, ace logs, ace upgrade <version>"
 }
 
-# Sourced, as test/install.sh does, the script only defines its functions.
-if [[ -z "${BASH_SOURCE[0]:-}" || "${BASH_SOURCE[0]}" == "$0" ]]; then
-  main "$@"
-fi
+[[ "${BASH_SOURCE[0]:-$0}" != "$0" ]] || main "$@" # sourced (test/install.sh): functions only

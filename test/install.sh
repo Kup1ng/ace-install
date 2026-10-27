@@ -222,14 +222,12 @@ installer "" docker
 expect 0 "Docker still pulls through the proxy"
 expect_proxied ""
 
-echo "the 1.x drop-in, with the proxy in Environment=, moves to the file"
-rm -f "$dropins/ace-proxy.env"
-old_proxy="${proxy_url//%/%%}" # systemd's specifiers: 1.x wrote %% for each %
-printf '%s\n' '# Written by the Ace installer: Docker pulls through this proxy.' '[Service]' \
-  "Environment=\"HTTP_PROXY=${old_proxy}\" \"HTTPS_PROXY=${old_proxy}\" \"NO_PROXY=localhost,127.0.0.0/8,::1\"" \
-  >"$dropins/ace-proxy.conf"
+echo "ACE_PROXY rewrites a drop-in with the proxy in Environment= and a loose file"
+printf '%s\n' '[Service]' "Environment=\"HTTP_PROXY=${proxy_url//%/%%}\"" >"$dropins/ace-proxy.conf"
+printf 'HTTP_PROXY=http://old.example.test\n' >"$dropins/ace-proxy.env"
+chmod 644 "$dropins/ace-proxy.env"
 : >"$state/systemctl"
-installer "" docker
+installer "$proxy_url" docker
 expect 0 "Docker restarts"
 expect_proxied $'daemon-reload\nrestart docker'
 
