@@ -69,12 +69,18 @@ set_setting() {
 # major VERSION prints a version's major number: 2 for 2.0.0-rc.1.
 major() { printf '%s' "${1%%.*}"; }
 
-# fetch VERSION NAME DEST downloads one of ace-install's files of a version.
+# fetch VERSION NAME DEST downloads one of ace-install's files of a version,
+# through ACE_PROXY when .env has one. curl reads the proxy from its
+# environment, which only root can see: on its command line (-x) every user
+# of the server could read the proxy's password.
 fetch() {
-  local proxy opts=(-fsSL --retry 3 --connect-timeout 15)
+  local proxy opts=(-fsSL --retry 3 --connect-timeout 15 "${repo_raw}/${ACE_INSTALL_REF:-v$1}/$2" -o "$3")
   proxy="$(setting ACE_PROXY)"
-  [[ -z "$proxy" ]] || opts+=(-x "$proxy")
-  curl "${opts[@]}" "${repo_raw}/${ACE_INSTALL_REF:-v$1}/$2" -o "$3"
+  if [[ -n "$proxy" ]]; then
+    https_proxy="$proxy" HTTPS_PROXY="$proxy" curl "${opts[@]}"
+  else
+    curl "${opts[@]}"
+  fi
 }
 
 # healthy VERSION waits up to 3 minutes for the panel to answer its health

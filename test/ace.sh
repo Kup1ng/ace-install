@@ -5,7 +5,8 @@
 # Caddyfile `ace` writes (security headers, HSTS, TLS), a good upgrade, a
 # rollback by hand, an upgrade that goes back by itself, the refusals (a
 # 1.x target, a 1.x panel), the last 3 backups, ace apply, ace certificate
-# (with openssl), and that no temporary file stays.
+# (with openssl), that ACE_PROXY reaches curl through its environment and
+# never its command line, and that no temporary file stays.
 #
 # It writes /opt/ace and /usr/local/bin/ace, so it runs only in CI or in a
 # throwaway container with openssl:
@@ -32,6 +33,8 @@ export ACE_TEST_SRC="$src" ACE_TEST_STATE="$state"
 # $state/published: the script under test is the target version's own.
 cat >"$work/bin/curl" <<'EOF'
 #!/usr/bin/env bash
+printf '%s\n' "$*" >>"$ACE_TEST_STATE/curl.args"
+printf '%s\n' "${https_proxy:-}" >>"$ACE_TEST_STATE/curl.proxy"
 out="" url=""
 while (($#)); do
   case "$1" in
@@ -278,5 +281,16 @@ if command -v openssl >/dev/null; then
 else
   echo "SKIP ace certificate: no openssl"
 fi
+
+echo "ACE_PROXY reaches curl through its environment, never its command line"
+proxy_url='http://ace:fake%2Fpassword@proxy.example.test:3128' # an obviously fake password
+printf 'ACE_PROXY=%s\n' "$proxy_url" >>/opt/ace/.env
+: >"$state/curl.args"
+: >"$state/curl.proxy"
+run ace upgrade 2.0.7
+expect 0 2.0.7 "Done: the panel runs 2.0.7"
+[[ "$(wc -l <"$state/curl.args")" == 2 ]] || fail "curl did not fetch ace and compose.yml: $(cat "$state/curl.args")"
+! grep -qF 'fake%2Fpassword' "$state/curl.args" || fail "the proxy is on curl's command line: $(cat "$state/curl.args")"
+[[ "$(sort -u "$state/curl.proxy")" == "$proxy_url" ]] || fail "curl did not get the proxy in its environment: $(cat "$state/curl.proxy")"
 
 echo "all good"
