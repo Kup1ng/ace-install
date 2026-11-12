@@ -12,6 +12,8 @@ On a fresh server running **Ubuntu 24.04 or 22.04** (x86_64), as root:
 curl -fsSL https://raw.githubusercontent.com/Kup1ng/ace-install/main/install.sh | bash
 ```
 
+Until 2.0.0 is released, `main` still installs 1.x. To install a 2.x release candidate, use the command under [Versions](#versions).
+
 Before you start:
 
 - a domain whose DNS (an A record) points to the server, for the panel's address;
@@ -50,15 +52,21 @@ Set them before `bash`, e.g. `... | ACE_TLS=custom ACE_TLS_CERT=/root/panel.pem 
 | `ACE_PROXY` | An `http://` or `socks5://` proxy for apt and Docker on a server that cannot reach them directly. Docker keeps pulling through it (upgrades too). Its URL may hold a password, so other users of the server never see it: curl gets it in its environment and apt in a root-only file, never on a command line, and Docker reads it from a root-only `EnvironmentFile` (below), not from its unit's `Environment=`, which `systemctl show docker` shows everyone. |
 | `ACE_APT_MIRROR` | A mirror of the Ubuntu archive, e.g. `http://mirror.arvancloud.ir/ubuntu`, for this install only; the server's own sources stay. |
 | `ACE_ANY_OS=1` | Try a system other than Ubuntu 22.04/24.04. Unsupported. |
-| `ACE_INSTALL_REF` | Take this repository's files (and the default version) from another branch or tag, e.g. `m15-install-v2` before 2.0.0 is released. |
+| `ACE_INSTALL_REF` | Take this repository's files (and the default version) from another branch or tag, e.g. `m15-install-v2` before 2.0.0 is released; until then, run that branch's own `install.sh` too (the command under [Versions](#versions)), since `main`'s is the 1.x installer. |
 | `ACE_DRY_RUN=1` | Only resolve the version and check that this repository has its files at the ref; nothing changes, no root needed. It prints `version=` and `ref=`. |
 
-An install that stopped half-way can run again: it keeps the secrets it already made.
+An install that stopped half-way can run again: it keeps the secrets it already made. If it stopped after the panel's containers started (while it waited for the panel or created the Owner), stop them first, or the installer finds a panel running and refuses:
+
+```bash
+docker compose -f /opt/ace/compose.yml down
+```
+
+This keeps the database and the other volumes; then run the install command again.
 
 ## After the install
 
 - Sign in at `https://<domain>` as the Owner, and change the password.
-- Add game servers' machines on **Nodes → Add node**: the panel shows the command to run on each.
+- Add game servers' machines on **Nodes → New Node**: the panel shows the command to run on each.
 - A node accepts its panel's address only: a node that moves to this panel runs `ace-node panel-ip <this server's address>`.
 
 ## The `ace` command
@@ -89,9 +97,11 @@ An upgrade runs the target version's own `ace` from this repository's tag, so ea
 | `/opt/ace/rollback/` | The files of the version before the last upgrade (`compose.yml`, `.env`, `Caddyfile`, `ace`), for `ace rollback` |
 | `/etc/systemd/system/docker.service.d/ace-proxy.conf` | With `ACE_PROXY`: the drop-in that points Docker at `ace-proxy.env` next to it, which holds the proxy (root only). An install with `ACE_PROXY` rewrites both, so a drop-in with the proxy in `Environment=` (as 1.x wrote it) goes away |
 
-Every image comes from GHCR with the panel's version, PostgreSQL and Caddy included: each release copies them there, so one version is one known set of images.
+Every image comes from GHCR with the panel's version, PostgreSQL and Caddy included: each release copies them there, so one version is one known set of images. From the first release candidate (2.0.0-rc.1) on, the stack pins each image by the digest its release records, not only by its tag, so a tag that moves later cannot change an installed version. The development versions before it pull by tag.
 
 The panel reads the certificate Caddy serves with a TLS handshake to `caddy:443` on the stack's network (`ACE_PANEL_TLS_CHECK_ADDR`, `ACE_PANEL_TLS_DOMAIN`, `ACE_PANEL_TLS_MODE` in `compose.yml`): Caddy's admin API lists no certificates, and its Let's Encrypt files are root-only next to their keys.
+
+The web app asks the API for the panel's default language from the server side (the sign-in page). `compose.yml` gives it the API's address, `ACE_API_ORIGIN=http://panel-api:8080`, and `NO_PROXY=panel-api`, so the request never goes through a proxy variable; without them the sign-in page silently falls back to Persian.
 
 Optional settings in `/opt/ace/.env`; after a change run `ace apply`:
 
@@ -104,14 +114,20 @@ Optional settings in `/opt/ace/.env`; after a change run `ace apply`:
 
 ## Versions
 
-[`VERSION`](VERSION) names the current release. The tag `v<version>` of this repository holds the files of that version, which the installer and `ace upgrade` take. Until 2.0.0 is released, `main` stays the 1.x installer and v2 lives on the branch `m15-install-v2` (`ACE_INSTALL_REF=m15-install-v2`), whose `VERSION` is the first 2.x release it installs (`2.0.0-rc.1`; set `ACE_VERSION` for another).
+[`VERSION`](VERSION) names the current release. The tag `v<version>` of this repository holds the files of that version, which the installer and `ace upgrade` take. Until 2.0.0 is released, `main` stays the 1.x installer and v2 lives on the branch `m15-install-v2` (`ACE_INSTALL_REF=m15-install-v2`), whose `VERSION` is the first 2.x release it installs (`2.0.0-rc.1`; set `ACE_VERSION` for another). Take `install.sh` from that branch as well, since `main`'s is the 1.x installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Kup1ng/ace-install/m15-install-v2/install.sh | ACE_INSTALL_REF=m15-install-v2 ACE_VERSION=2.0.0-rc.N bash
+```
+
+Replace `N` with the release candidate's number.
 
 ## Checks
 
 CI runs shellcheck and `bash -n` on the scripts, `docker compose config` on the stack, and two tests:
 
 - [`test/install.sh`](test/install.sh) runs `install.sh` with `ACE_DRY_RUN=1` against a stub `curl`: an explicit version, the `VERSION` of `main` and of a branch, prereleases, the refusal of 1.x and malformed versions, a version without a tag, bad options, that it runs when piped into `bash` (as the install command runs it), and that `ACE_PROXY` reaches curl in its environment, never on its command line. It also sources `install.sh` (which then only defines its functions) to check that apt gets the proxy from a root-only file and that Docker's goes into a root-only `EnvironmentFile`, never into its unit (an old drop-in with `Environment=` and a loose file included; a loose file that already holds the same proxy is made root's only again), against a stub `systemctl`. It changes nothing and needs no root: `bash test/install.sh`.
-- [`test/ace.sh`](test/ace.sh) runs `ace` against stub `docker` and `curl`: the Caddyfile (headers, HSTS, TLS), a good upgrade, a rollback, an upgrade that goes back by itself, the refusals (a 1.x target, a 1.x panel), the last 3 backups, `ace apply`, `ace certificate`, `ACE_PROXY` kept off curl's command line, and no temporary file left. It writes `/opt/ace`, so it runs in CI or a throwaway container only:
+- [`test/ace.sh`](test/ace.sh) runs `ace` against stub `docker` and `curl`: panel-web's settings in `compose.yml` (`ACE_API_ORIGIN`, `NO_PROXY`), the Caddyfile (headers, HSTS, TLS), a good upgrade, a rollback, an upgrade that goes back by itself, the refusals (a 1.x target, a 1.x panel), the last 3 backups, `ace apply`, `ace certificate`, `ACE_PROXY` kept off curl's command line, and no temporary file left. It writes `/opt/ace`, so it runs in CI or a throwaway container only:
 
 ```bash
 docker run --rm -v "$PWD:/src:ro" ubuntu:24.04 bash -c 'apt-get update -qq && apt-get install -y -qq openssl >/dev/null && bash /src/test/ace.sh'
