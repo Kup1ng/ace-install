@@ -53,7 +53,7 @@ Set them before `bash`, e.g. `... | ACE_TLS=custom ACE_TLS_CERT=/root/panel.pem 
 | `ACE_APT_MIRROR` | A mirror of the Ubuntu archive, e.g. `http://mirror.arvancloud.ir/ubuntu`, for this install only; the server's own sources stay. |
 | `ACE_ANY_OS=1` | Try a system other than Ubuntu 22.04/24.04. Unsupported. |
 | `ACE_INSTALL_REF` | Take this repository's files (and the default version) from another branch or tag, e.g. `m15-install-v2` before 2.0.0 is released; until then, run that branch's own `install.sh` too (the command under [Versions](#versions)), since `main`'s is the 1.x installer. |
-| `ACE_DRY_RUN=1` | Only resolve the version and check that this repository has its files at the ref; nothing changes, no root needed. It prints `version=` and `ref=`. |
+| `ACE_DRY_RUN=1` | Only resolve the version, check that this repository has its files at the ref, and check the stack's images (under [Files](#files)); nothing changes, no root needed. It prints `version=`, `ref=` and `stack=` (`pinned` or `unpinned`). |
 
 An install that stopped half-way can run again: it keeps the secrets it already made. If it stopped after the panel's containers started (while it waited for the panel or created the Owner), stop them first, or the installer finds a panel running and refuses:
 
@@ -82,7 +82,7 @@ This keeps the database and the other volumes; then run the install command agai
 | `ace upgrade <version>` | Back up the database to `/opt/ace/backups` (the last 3 stay), move the panel to `<version>`, and go back by itself if it is not healthy within 3 minutes |
 | `ace rollback` | Go back to the version before the last upgrade. The data stays as it is: the panel's migrations only expand the schema until a later version contracts it |
 
-An upgrade runs the target version's own `ace` from this repository's tag, so each version brings the steps it needs, its Caddyfile included. Nothing changes before its files and images are downloaded, and the backup is made before the switch. A 1.x panel is refused with nothing changed: v2 starts on a fresh install.
+An upgrade runs the target version's own `ace` from this repository's tag, so each version brings the steps it needs, its Caddyfile included. Nothing changes before its files are downloaded, its stack's images checked (under [Files](#files)) and pulled, and the backup is made before the switch. A 1.x panel is refused with nothing changed: v2 starts on a fresh install.
 
 ## Files
 
@@ -97,7 +97,9 @@ An upgrade runs the target version's own `ace` from this repository's tag, so ea
 | `/opt/ace/rollback/` | The files of the version before the last upgrade (`compose.yml`, `.env`, `Caddyfile`, `ace`), for `ace rollback` |
 | `/etc/systemd/system/docker.service.d/ace-proxy.conf` | With `ACE_PROXY`: the drop-in that points Docker at `ace-proxy.env` next to it, which holds the proxy (root only). An install with `ACE_PROXY` rewrites both, so a drop-in with the proxy in `Environment=` (as 1.x wrote it) goes away |
 
-Every image comes from GHCR with the panel's version, PostgreSQL and Caddy included: each release copies them there, so one version is one known set of images. From the first release candidate (2.0.0-rc.1) on, the stack pins each image by the digest its release records, not only by its tag, so a tag that moves later cannot change an installed version. The development versions before it pull by tag.
+Every image comes from GHCR with the panel's version, PostgreSQL and Caddy included: each release copies them there, so one version is one known set of images. From the first release candidate (2.0.0-rc.1) on, the stack pins each image by the digest its release records, not only by its tag (`ghcr.io/kup1ng/<name>:<version>@sha256:<digest>`), so a tag that moves later cannot change an installed version. The development versions before it pull by tag.
+
+The installer and `ace upgrade` check the stack they download before they change anything: every image must be one of Ace's own on GHCR and name the version being installed, and a release's (`x.y.z` or `x.y.z-rc.N`) must be pinned by digest; only a development prerelease (e.g. `2.1.0-alpha.1`) may pull by tag. Otherwise they stop with one line that says what to do, for example to take the version's own tag rather than a branch's files (`ACE_INSTALL_REF`).
 
 The panel reads the certificate Caddy serves with a TLS handshake to `caddy:443` on the stack's network (`ACE_PANEL_TLS_CHECK_ADDR`, `ACE_PANEL_TLS_DOMAIN`, `ACE_PANEL_TLS_MODE` in `compose.yml`): Caddy's admin API lists no certificates, and its Let's Encrypt files are root-only next to their keys.
 
@@ -114,21 +116,33 @@ Optional settings in `/opt/ace/.env`; after a change run `ace apply`:
 
 ## Versions
 
-[`VERSION`](VERSION) names the current release. The tag `v<version>` of this repository holds the files of that version, which the installer and `ace upgrade` take. Until 2.0.0 is released, `main` stays the 1.x installer and v2 lives on the branch `m15-install-v2` (`ACE_INSTALL_REF=m15-install-v2`), whose `VERSION` is the first 2.x release it installs (`2.0.0-rc.1`; set `ACE_VERSION` for another). Take `install.sh` from that branch as well, since `main`'s is the 1.x installer:
+[`VERSION`](VERSION) names the current release. The tag `v<version>` of this repository holds the files of that version, which the installer and `ace upgrade` take. Until 2.0.0 is released, `main` stays the 1.x installer and v2 lives on the branch `m15-install-v2` (`ACE_INSTALL_REF=m15-install-v2`), whose `VERSION` is the 2.x release it installs (`2.0.0-rc.1` first). Take `install.sh` from that branch as well, since `main`'s is the 1.x installer:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Kup1ng/ace-install/m15-install-v2/install.sh | ACE_INSTALL_REF=m15-install-v2 ACE_VERSION=2.0.0-rc.N bash
 ```
 
-Replace `N` with the release candidate's number.
+Replace `N` with the release candidate's number. The branch's `compose.yml` is pinned to its latest release candidate only, so the installer refuses an earlier one from the branch's files: for that, leave out `ACE_INSTALL_REF`, and the files come from the tag `v2.0.0-rc.N`.
 
 ## Checks
 
-CI runs shellcheck and `bash -n` on the scripts, `docker compose config` on the stack, and two tests:
+CI runs shellcheck and `bash -n` on the scripts, `docker compose config` on the stack, [`test/compose.sh`](test/compose.sh) (the four images of `compose.yml` are all unpinned, or all pinned to `VERSION` by a 64-hex digest), and three tests:
 
-- [`test/install.sh`](test/install.sh) runs `install.sh` with `ACE_DRY_RUN=1` against a stub `curl`: an explicit version, the `VERSION` of `main` and of a branch, prereleases, the refusal of 1.x and malformed versions, a version without a tag, bad options, that it runs when piped into `bash` (as the install command runs it), and that `ACE_PROXY` reaches curl in its environment, never on its command line. It also sources `install.sh` (which then only defines its functions) to check that apt gets the proxy from a root-only file and that Docker's goes into a root-only `EnvironmentFile`, never into its unit (an old drop-in with `Environment=` and a loose file included; a loose file that already holds the same proxy is made root's only again), against a stub `systemctl`. It changes nothing and needs no root: `bash test/install.sh`.
-- [`test/ace.sh`](test/ace.sh) runs `ace` against stub `docker` and `curl`: panel-web's settings in `compose.yml` (`ACE_API_ORIGIN`, `NO_PROXY`), the Caddyfile (headers, HSTS, TLS), a good upgrade, a rollback, an upgrade that goes back by itself, the refusals (a 1.x target, a 1.x panel), the last 3 backups, `ace apply`, `ace certificate`, `ACE_PROXY` kept off curl's command line, and no temporary file left. It writes `/opt/ace`, so it runs in CI or a throwaway container only:
+- [`test/install.sh`](test/install.sh) runs `install.sh` with `ACE_DRY_RUN=1` against a stub `curl`: an explicit version, the `VERSION` of `main` and of a branch, prereleases, the refusal of 1.x and malformed versions, a version without a tag, the stack's images (pinned to the version for a release, by tag for a development prerelease only, another version's, not Ace's own), bad options, that it runs when piped into `bash` (as the install command runs it), and that `ACE_PROXY` reaches curl in its environment, never on its command line. It also sources `install.sh` (which then only defines its functions) to check that apt gets the proxy from a root-only file and that Docker's goes into a root-only `EnvironmentFile`, never into its unit (an old drop-in with `Environment=` and a loose file included; a loose file that already holds the same proxy is made root's only again), against a stub `systemctl`. It changes nothing and needs no root: `bash test/install.sh`.
+- [`test/ace.sh`](test/ace.sh) runs `ace` against stub `docker` and `curl`: panel-web's settings in `compose.yml` (`ACE_API_ORIGIN`, `NO_PROXY`), the Caddyfile (headers, HSTS, TLS), a good upgrade, a rollback, an upgrade that goes back by itself, the refusals (a 1.x target, a 1.x panel, a release's stack that pulls by tag or is another version's; a development prerelease may pull by tag), the last 3 backups, `ace apply`, `ace certificate`, `ACE_PROXY` kept off curl's command line, and no temporary file left. It writes `/opt/ace`, so it runs in CI or a throwaway container only:
 
 ```bash
 docker run --rm -v "$PWD:/src:ro" ubuntu:24.04 bash -c 'apt-get update -qq && apt-get install -y -qq openssl >/dev/null && bash /src/test/ace.sh'
 ```
+
+- [`test/pin-release.sh`](test/pin-release.sh) runs `scripts/pin-release.sh` in a scratch copy against stub `gh` and `docker`: a release that does not exist yet, a draft, a digest the notes lack or give twice, a tag that moved on GHCR or is missing there, retried network drops, the pin itself (only the four image lines and `VERSION` change), running it again, `--check`, the next release candidate, and `test/compose.sh` on pinned, unpinned and broken stacks. No root, no network: `bash test/pin-release.sh`.
+
+## Releasing (maintainers)
+
+This repository is tagged for release candidates and final releases only, on the branch that serves v2 (`m15-install-v2` until 2.0.0, then `main`). On the release machine, with `gh` signed in and Docker logged in to `ghcr.io`:
+
+1. Release the panel (Ace-Panel) `<version>` first, with its `scripts/release.sh`: its GitHub release records each image's digest in its notes, as `ghcr.io/kup1ng/<name>@sha256:<digest>`.
+2. Run [`scripts/pin-release.sh <version>`](scripts/pin-release.sh). It reads those digests, refuses a draft release, a missing or doubled digest and a tag that moved on GHCR since, and writes `compose.yml`'s four images as `ghcr.io/kup1ng/<name>:<version>@sha256:<digest>` and `VERSION` = `<version>`. Running it again changes nothing; `scripts/pin-release.sh --check <version>` checks the files without writing.
+3. Commit `compose.yml` and `VERSION` as `chore: <version>`, and push.
+4. Wait for CI to pass on that commit (on the branch's pull request: `gh pr checks <n> --repo Kup1ng/ace-install`).
+5. Tag that commit and push the tag: `git tag -a v<version> -m v<version>`, then `git push origin refs/tags/v<version>`.

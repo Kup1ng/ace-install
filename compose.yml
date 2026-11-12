@@ -1,9 +1,19 @@
 # The Ace panel's stack (v2), installed in /opt/ace by install.sh and moved
 # between versions by `ace upgrade` and `ace rollback`. Every image comes
 # from GHCR with the panel's version: the release copies PostgreSQL and
-# Caddy there too, so one version is one known set of images. Tags for
-# now; from 2.0.0-rc.1 each image is pinned by its release's digest.
+# Caddy there too, so one version is one known set of images.
 # v2 has no MySQL and no ace-fw (ADR 0016): plugins get no databases.
+#
+# The images are in one of two states (D52.53 (4), ADR 0013), which CI
+# keeps the same for all four (test/compose.sh):
+#   unpinned  ghcr.io/kup1ng/<name>:${ACE_VERSION:?}, the tag ACE_VERSION in
+#             .env names: development, and a release before its pin;
+#   pinned    ghcr.io/kup1ng/<name>:<version>@sha256:<digest>, from
+#             2.0.0-rc.1 on: scripts/pin-release.sh writes the digest the
+#             panel's GitHub release recorded for each image, and the
+#             version in VERSION, so a tag that moves later changes nothing.
+# install.sh and `ace upgrade` refuse a stack whose images name another
+# version, and a release's (x.y.z, x.y.z-rc.N) that is not pinned.
 #
 # /opt/ace/.env holds ACE_VERSION, ACE_DOMAIN, ACE_PUBLIC_IP, ACE_TLS (acme
 # or custom) and the optional settings. The secrets live in /opt/ace/secrets
