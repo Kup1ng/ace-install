@@ -2,11 +2,14 @@
 # Checks install.sh's version resolution with ACE_DRY_RUN=1, which changes
 # nothing on the machine: curl is a stub that serves this checkout's files
 # for the refs listed in $state/refs, with each ref's VERSION from
-# $state/VERSION.<ref>. It covers an explicit version, the VERSION of main
-# and of ACE_INSTALL_REF, prereleases of the 2.x line, the refusal of 1.x
-# versions and of malformed ones, a version ace-install has no tag for, bad
-# options, that it runs when piped into bash, and that ACE_PROXY reaches curl
-# through its environment, never its command line. It also sources install.sh
+# $state/VERSION.<ref> and its compose.yml from $state/compose.<ref>. It
+# covers an explicit version, the VERSION of main and of ACE_INSTALL_REF,
+# prereleases of the 2.x line, the refusal of 1.x versions and of malformed
+# ones, a version ace-install has no tag for, the stack's images (pinned to
+# the version for a release, by tag only for a development prerelease,
+# another version's, not Ace's own), bad options, that it runs when piped
+# into bash, and that ACE_PROXY reaches curl through its environment, never
+# its command line. It also sources install.sh
 # to check apt_proxy and docker_proxy against a stub systemctl: apt reads the
 # proxy from a root-only file, and Docker's goes into a root-only
 # EnvironmentFile, never into the unit's Environment=, which every user can
@@ -45,6 +48,8 @@ ref="$(basename "$(dirname "$url")")"
 grep -qx "$ref" "$ACE_TEST_STATE/refs" || exit 22
 if [[ "$name" == VERSION && -f "$ACE_TEST_STATE/VERSION.$ref" ]]; then
   file="$ACE_TEST_STATE/VERSION.$ref"
+elif [[ "$name" == compose.yml ]]; then
+  file="$ACE_TEST_STATE/compose.$ref"
 else
   file="$ACE_TEST_SRC/$name"
 fi
@@ -54,9 +59,28 @@ EOF
 chmod 755 "$work/bin/curl"
 export PATH="$work/bin:$PATH" TMPDIR="$work/tmp"
 
-printf '%s\n' main v2.0.0 v2.0.1 v2.0.0-rc.1 m15-install-v2 >"$state/refs"
+printf '%s\n' main v2.0.0 v2.0.1 v2.0.0-rc.1 m15-install-v2 v2.0.2 v2.0.0-rc.2 v2.1.0-alpha.1 dev-branch >"$state/refs"
 echo 2.0.1 >"$state/VERSION.main"
 echo 2.0.0-rc.1 >"$state/VERSION.m15-install-v2"
+echo 2.1.0-alpha.1 >"$state/VERSION.dev-branch"
+
+# stack REF TAG gives REF this checkout's compose.yml with every image tagged
+# TAG: a version, pinned by a made-up digest, or unpinned (ACE_VERSION's tag).
+stack() {
+  # shellcheck disable=SC2016 # compose.yml's text, not this shell's
+  local to='${ACE_VERSION:?}'
+  [[ "$2" == unpinned ]] || to="$2@sha256:$(printf '%064d' 0)"
+  sed -E "s#^( +image: ghcr\.io/kup1ng/[a-z0-9-]+)[:@].*#\1:${to}#" "$src/compose.yml" >"$state/compose.$1"
+}
+stack main 2.0.1
+stack v2.0.0 2.0.0
+stack v2.0.1 2.0.1
+stack v2.0.0-rc.1 2.0.0-rc.1
+stack m15-install-v2 2.0.0-rc.1
+stack v2.0.2 unpinned
+stack v2.0.0-rc.2 unpinned
+stack v2.1.0-alpha.1 unpinned
+stack dev-branch unpinned
 
 # dry ENV... runs a dry run with only these ACE_* variables set, keeping its
 # output and exit status.
@@ -81,7 +105,7 @@ expect() {
 
 echo "an explicit version takes its own tag"
 dry ACE_VERSION=2.0.0
-expect 0 $'version=2.0.0\nref=v2.0.0' "nothing changed"
+expect 0 $'version=2.0.0\nref=v2.0.0\nstack=pinned' "(images pinned); nothing changed"
 
 echo "no version: main's VERSION"
 dry
@@ -96,8 +120,40 @@ dry ACE_VERSION=2.0.0-rc.1
 expect 0 $'version=2.0.0-rc.1\nref=v2.0.0-rc.1'
 
 echo "an explicit version with a branch's files"
-dry ACE_VERSION=2.0.1 ACE_INSTALL_REF=m15-install-v2 ACE_TLS=custom
-expect 0 $'version=2.0.1\nref=m15-install-v2'
+dry ACE_VERSION=2.1.0-alpha.2 ACE_INSTALL_REF=dev-branch ACE_TLS=custom
+expect 0 $'version=2.1.0-alpha.2\nref=dev-branch\nstack=unpinned'
+
+echo "a stack of another version is refused"
+dry ACE_VERSION=2.0.1 ACE_INSTALL_REF=m15-install-v2
+expect 1 "ace-install m15-install-v2's stack is 2.0.0-rc.1's, not 2.0.1's" "take the files of ace-install's tag v2.0.1: unset ACE_INSTALL_REF; nothing changed"
+dry ACE_VERSION=2.1.0-alpha.2 ACE_INSTALL_REF=m15-install-v2
+expect 1 "ace-install m15-install-v2's stack is 2.0.0-rc.1's, not 2.1.0-alpha.2's"
+
+echo "a release whose stack pulls by tag is refused"
+dry ACE_VERSION=2.0.2
+expect 1 "2.0.2 is a release, but ace-install v2.0.2's stack pulls its images by tag" "ace-install's tag v2.0.2 is not a finished release; pick another version"
+dry ACE_VERSION=2.0.0-rc.2
+expect 1 "2.0.0-rc.2 is a release, but ace-install v2.0.0-rc.2's stack pulls its images by tag"
+dry ACE_VERSION=2.0.0-rc.2 ACE_INSTALL_REF=dev-branch
+expect 1 "2.0.0-rc.2 is a release, but ace-install dev-branch's stack" "unset ACE_INSTALL_REF"
+stack v2.0.2 2.0.2
+sed -i -E 's#(ace-caddy):.*#\1:2.0.2#' "$state/compose.v2.0.2"
+dry ACE_VERSION=2.0.2
+expect 1 "2.0.2 is a release, but ace-install v2.0.2's stack pulls its images by tag"
+
+echo "a development prerelease may pull by tag"
+dry ACE_VERSION=2.1.0-alpha.1
+expect 0 $'version=2.1.0-alpha.1\nref=v2.1.0-alpha.1\nstack=unpinned' "(images unpinned)"
+dry ACE_INSTALL_REF=dev-branch
+expect 0 $'version=2.1.0-alpha.1\nref=dev-branch\nstack=unpinned'
+
+echo "an image that is not Ace's own is refused"
+sed -i -E 's#(image: )ghcr\.io/kup1ng/ace-caddy:.*#\1caddy:2-alpine#' "$state/compose.dev-branch"
+dry ACE_INSTALL_REF=dev-branch
+expect 1 "ace-install dev-branch's stack pulls caddy:2-alpine, not one of Ace's images"
+grep -v 'image:' "$state/compose.dev-branch" >"$state/compose.v2.1.0-alpha.1"
+dry ACE_VERSION=2.1.0-alpha.1
+expect 1 "ace-install v2.1.0-alpha.1's stack names no image"
 
 echo "1.x is the v1 installer's"
 dry ACE_VERSION=1.1.0
