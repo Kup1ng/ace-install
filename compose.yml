@@ -13,7 +13,9 @@
 #             panel's GitHub release recorded for each image, and the
 #             version in VERSION, so a tag that moves later changes nothing.
 # install.sh and `ace upgrade` refuse a stack whose images name another
-# version, and a release's (x.y.z, x.y.z-rc.N) that is not pinned.
+# version, and a release's (x.y.z, x.y.z-rc.N) that is not pinned. They
+# read each service's block-style `image:` line, so keep one per service;
+# CI checks that these lines are all the images Docker resolves.
 #
 # /opt/ace/.env holds ACE_VERSION, ACE_DOMAIN, ACE_PUBLIC_IP, ACE_TLS (acme
 # or custom) and the optional settings. The secrets live in /opt/ace/secrets

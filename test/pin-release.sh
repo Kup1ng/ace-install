@@ -8,7 +8,8 @@
 # twice, a tag that moved on GHCR or is missing there, retried drops, the
 # pin itself (only the four image lines and VERSION change), running it
 # again, --check, the next release candidate, and test/compose.sh on pinned,
-# unpinned and broken stacks. No root, no network:
+# unpinned and broken stacks, and against lists of the images Docker
+# resolves (the same four, one more, one fewer). No root, no network:
 #
 #   bash test/pin-release.sh
 # shellcheck disable=SC2016 # the notes quote images in backticks; ${ACE_VERSION} is text here
@@ -293,5 +294,37 @@ expect 1 "compose.yml has 5 images, not the 4"
 cp "$work/compose.good" "$repo/compose.yml"
 check
 expect 0
+
+echo "test/compose.sh IMAGES: Docker resolves the same images as the image: lines"
+# resolve VALUE runs test/compose.sh with $work/resolved as the images Docker
+# resolved with ACE_VERSION=VALUE (unset when VALUE is empty).
+resolve() {
+  set +e
+  out="$(env -u ACE_VERSION ${1:+ACE_VERSION="$1"} bash "$repo/test/compose.sh" "$repo" "$work/resolved" 2>&1)"
+  code=$?
+  set -e
+}
+lines="$(for i in "${images[@]}"; do image "$i"; done)"
+LC_ALL=C sort -r <<<"$lines" >"$work/resolved"
+resolve 0.0.0
+expect 0 "pinned to 2.0.0-rc.2 by digest" "Docker resolves the same 4 images"
+printf '%s\nbusybox:1\n' "$lines" >"$work/resolved" # e.g. `extra: {image: busybox:1}`
+resolve 0.0.0
+expect 1 "only Docker sees: busybox:1" "block-style image: line"
+printf '%s\n%s\n' "$lines" "$(image ace-caddy)" >"$work/resolved"
+resolve 0.0.0
+expect 1 "only Docker sees: $(image ace-caddy)"
+grep -v ace-caddy <<<"$lines" >"$work/resolved"
+resolve 0.0.0
+expect 1 "only the lines name: $(image ace-caddy)"
+resolve ""
+expect 1 "set ACE_VERSION"
+printf '%s\n' "$unpinned" >"$repo/compose.yml"
+printf 'ghcr.io/kup1ng/%s:0.0.0\n' "${images[@]}" >"$work/resolved"
+resolve 0.0.0
+expect 0 "(unpinned)" "Docker resolves the same 4 images"
+resolve 0.0.1
+expect 1 "only Docker sees: ghcr.io/kup1ng/ace-caddy:0.0.0" "only the lines name: ghcr.io/kup1ng/ace-caddy:0.0.1"
+cp "$work/compose.good" "$repo/compose.yml"
 
 echo "all good"

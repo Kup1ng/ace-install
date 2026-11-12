@@ -34,8 +34,16 @@ jobs:
           docker compose -f compose.yml config --quiet
       - name: VERSION is a version
         run: grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?' VERSION
-      - name: The stack's images are all unpinned, or all pinned to VERSION by digest
-        run: bash test/compose.sh
+      - name: The stack's images are all unpinned, or all pinned to VERSION by digest, and are all Docker resolves
+        env:
+          ACE_VERSION: 0.0.0
+          ACE_DOMAIN: panel.example.test
+        run: |
+          args=(-f compose.yml)
+          while read -r profile; do args+=(--profile "$profile"); done < <(docker compose -f compose.yml config --profiles)
+          docker compose "${args[@]}" config --images >"$RUNNER_TEMP/images"
+          cat "$RUNNER_TEMP/images"
+          bash test/compose.sh . "$RUNNER_TEMP/images"
 
   install:
     name: install.sh resolves versions (dry run)
