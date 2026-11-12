@@ -1,8 +1,9 @@
 # The Ace panel's stack (v2), installed in /opt/ace by install.sh and moved
 # between versions by `ace upgrade` and `ace rollback`. Every image comes
 # from GHCR with the panel's version: the release copies PostgreSQL and
-# Caddy there too, so one version is one known set of images. v2 has no
-# MySQL and no ace-fw (ADR 0016): plugins get no databases.
+# Caddy there too, so one version is one known set of images. Tags for
+# now; from 2.0.0-rc.1 each image is pinned by its release's digest.
+# v2 has no MySQL and no ace-fw (ADR 0016): plugins get no databases.
 #
 # /opt/ace/.env holds ACE_VERSION, ACE_DOMAIN, ACE_PUBLIC_IP, ACE_TLS (acme
 # or custom) and the optional settings. The secrets live in /opt/ace/secrets

@@ -97,7 +97,7 @@ An upgrade runs the target version's own `ace` from this repository's tag, so ea
 | `/opt/ace/rollback/` | The files of the version before the last upgrade (`compose.yml`, `.env`, `Caddyfile`, `ace`), for `ace rollback` |
 | `/etc/systemd/system/docker.service.d/ace-proxy.conf` | With `ACE_PROXY`: the drop-in that points Docker at `ace-proxy.env` next to it, which holds the proxy (root only). An install with `ACE_PROXY` rewrites both, so a drop-in with the proxy in `Environment=` (as 1.x wrote it) goes away |
 
-Every image comes from GHCR with the panel's version, PostgreSQL and Caddy included: each release copies them there, so one version is one known set of images.
+Every image comes from GHCR with the panel's version, PostgreSQL and Caddy included: each release copies them there, so one version is one known set of images. From the first release candidate (2.0.0-rc.1) on, the stack pins each image by the digest its release records, not only by its tag, so a tag that moves later cannot change an installed version. The development versions before it pull by tag.
 
 The panel reads the certificate Caddy serves with a TLS handshake to `caddy:443` on the stack's network (`ACE_PANEL_TLS_CHECK_ADDR`, `ACE_PANEL_TLS_DOMAIN`, `ACE_PANEL_TLS_MODE` in `compose.yml`): Caddy's admin API lists no certificates, and its Let's Encrypt files are root-only next to their keys.
 
