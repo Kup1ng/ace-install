@@ -55,7 +55,13 @@ Set them before `bash`, e.g. `... | ACE_TLS=custom ACE_TLS_CERT=/root/panel.pem 
 | `ACE_INSTALL_REF` | Take this repository's files (and the default version) from another branch or tag, e.g. `m15-install-v2` before 2.0.0 is released; until then, run that branch's own `install.sh` too (the command under [Versions](#versions)), since `main`'s is the 1.x installer. |
 | `ACE_DRY_RUN=1` | Only resolve the version and check that this repository has its files at the ref; nothing changes, no root needed. It prints `version=` and `ref=`. |
 
-An install that stopped half-way can run again: it keeps the secrets it already made.
+An install that stopped half-way can run again: it keeps the secrets it already made. If it stopped after the panel's containers started (while it waited for the panel or created the Owner), stop them first, or the installer finds a panel running and refuses:
+
+```bash
+docker compose -f /opt/ace/compose.yml down
+```
+
+This keeps the database and the other volumes; then run the install command again.
 
 ## After the install
 
