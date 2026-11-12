@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Checks the v2 `ace` command without a panel: docker, curl, date and sleep
 # are stubs, so the panel "runs" the version it was last started with and
-# answers healthy unless that version is marked broken. It covers the
+# answers healthy unless that version is marked broken. It covers
+# panel-web's settings in compose.yml (the API's address, NO_PROXY), the
 # Caddyfile `ace` writes (security headers, HSTS, TLS), a good upgrade, a
 # rollback by hand, an upgrade that goes back by itself, the refusals (a
 # 1.x target, a 1.x panel), the last 3 backups, ace apply, ace certificate
@@ -133,6 +134,12 @@ backups() { find /opt/ace/backups -mindepth 1 -maxdepth 1 -type d -printf '%f\n'
 caddy_recreated() { cat "$state/caddy" 2>/dev/null || echo 0; }
 has() { grep -qF -- "$1" /opt/ace/Caddyfile || fail "the Caddyfile lacks ${1}: $(cat /opt/ace/Caddyfile)"; }
 lacks() { ! grep -qF -- "$1" /opt/ace/Caddyfile || fail "the Caddyfile has ${1}: $(cat /opt/ace/Caddyfile)"; }
+
+echo "panel-web reaches the API directly, never through a proxy"
+web="$(sed -n '/^  panel-web:$/,/^$/p' "$src/compose.yml")"
+for want in 'ACE_API_ORIGIN: http://panel-api:8080' 'NO_PROXY: panel-api' 'no_proxy: panel-api'; do
+  grep -qxF "      ${want}" <<<"$web" || fail "panel-web in compose.yml lacks ${want}: ${web}"
+done
 
 echo "the Caddyfile install.sh has ace write"
 run ace __caddyfile

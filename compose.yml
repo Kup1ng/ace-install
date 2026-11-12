@@ -55,6 +55,14 @@ services:
 
   panel-web:
     image: ghcr.io/kup1ng/ace-panel-web:${ACE_VERSION:?}
+    environment:
+      # The sign-in page asks the API for the panel's default language from
+      # the server side. It goes straight to panel-api, never through a
+      # proxy: with a proxy variable and no NO_PROXY the request fails and
+      # the page silently falls back to Persian. test/ace.sh keeps these.
+      ACE_API_ORIGIN: http://panel-api:8080
+      NO_PROXY: panel-api
+      no_proxy: panel-api
     restart: unless-stopped
 
   # HTTPS for ACE_DOMAIN (the Caddyfile `ace` writes from .env): a Let's
