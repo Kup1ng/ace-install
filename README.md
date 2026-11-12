@@ -66,7 +66,7 @@ This keeps the database and the other volumes; then run the install command agai
 ## After the install
 
 - Sign in at `https://<domain>` as the Owner, and change the password.
-- Add game servers' machines on **Nodes → Add node**: the panel shows the command to run on each.
+- Add game servers' machines on **Nodes → New Node**: the panel shows the command to run on each.
 - A node accepts its panel's address only: a node that moves to this panel runs `ace-node panel-ip <this server's address>`.
 
 ## The `ace` command
