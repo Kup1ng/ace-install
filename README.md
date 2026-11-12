@@ -52,7 +52,7 @@ Set them before `bash`, e.g. `... | ACE_TLS=custom ACE_TLS_CERT=/root/panel.pem 
 | `ACE_PROXY` | An `http://` or `socks5://` proxy for apt and Docker on a server that cannot reach them directly. Docker keeps pulling through it (upgrades too). Its URL may hold a password, so other users of the server never see it: curl gets it in its environment and apt in a root-only file, never on a command line, and Docker reads it from a root-only `EnvironmentFile` (below), not from its unit's `Environment=`, which `systemctl show docker` shows everyone. |
 | `ACE_APT_MIRROR` | A mirror of the Ubuntu archive, e.g. `http://mirror.arvancloud.ir/ubuntu`, for this install only; the server's own sources stay. |
 | `ACE_ANY_OS=1` | Try a system other than Ubuntu 22.04/24.04. Unsupported. |
-| `ACE_INSTALL_REF` | Take this repository's files (and the default version) from another branch or tag, e.g. `m15-install-v2` before 2.0.0 is released; until then, run that branch's own `install.sh` too (the command under [Versions](#versions)), since `main`'s is the 1.x installer. |
+| `ACE_INSTALL_REF` | Take this repository's files (and the default version) from another branch or tag instead of the version's tag `v<version>`, for development. A release (`x.y.z`, `x.y.z-rc.N`) installs from its own tag: leave this out (the command under [Versions](#versions)). |
 | `ACE_DRY_RUN=1` | Only resolve the version, check that this repository has its files at the ref, and check the stack's images (under [Files](#files)); nothing changes, no root needed. It prints `version=`, `ref=` and `stack=` (`pinned` or `unpinned`). |
 
 An install that stopped half-way can run again: it keeps the secrets it already made. If it stopped after the panel's containers started (while it waited for the panel or created the Owner), stop them first, or the installer finds a panel running and refuses:
@@ -116,13 +116,13 @@ Optional settings in `/opt/ace/.env`; after a change run `ace apply`:
 
 ## Versions
 
-[`VERSION`](VERSION) names the current release. The tag `v<version>` of this repository holds the files of that version, which the installer and `ace upgrade` take. Until 2.0.0 is released, `main` stays the 1.x installer and v2 lives on the branch `m15-install-v2` (`ACE_INSTALL_REF=m15-install-v2`), whose `VERSION` is the 2.x release it installs (`2.0.0-rc.1` first). Take `install.sh` from that branch as well, since `main`'s is the 1.x installer:
+[`VERSION`](VERSION) names the current release. The tag `v<version>` of this repository holds the files of that version, which the installer and `ace upgrade` take. Until 2.0.0 is released, `main` stays the 1.x installer and v2 lives on the branch `m15-install-v2`, whose `VERSION` is the 2.x release it is working towards (`2.0.0-rc.1` first). To install a release candidate, take `install.sh` from that branch, since `main`'s is the 1.x installer, and name the release candidate; the installer then takes its files from the tag `v2.0.0-rc.N`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Kup1ng/ace-install/m15-install-v2/install.sh | ACE_INSTALL_REF=m15-install-v2 ACE_VERSION=2.0.0-rc.N bash
+curl -fsSL https://raw.githubusercontent.com/Kup1ng/ace-install/m15-install-v2/install.sh | ACE_VERSION=2.0.0-rc.N bash
 ```
 
-Replace `N` with the release candidate's number. The branch's `compose.yml` is pinned to its latest release candidate only, so the installer refuses an earlier one from the branch's files: for that, leave out `ACE_INSTALL_REF`, and the files come from the tag `v2.0.0-rc.N`.
+Replace `N` with the release candidate's number; this works for every release candidate that has its tag. Do not add `ACE_INSTALL_REF=m15-install-v2`: a branch's `compose.yml` pulls by tag until a release pins it, and then holds that release's pins only, so the installer refuses a release candidate from the branch's files unless the branch's latest pin is that one. `ACE_INSTALL_REF` is for development branches.
 
 ## Checks
 
@@ -144,5 +144,5 @@ This repository is tagged for release candidates and final releases only, on the
 1. Release the panel (Ace-Panel) `<version>` first, with its `scripts/release.sh`: its GitHub release records each image's digest in its notes, as `ghcr.io/kup1ng/<name>@sha256:<digest>`.
 2. Run [`scripts/pin-release.sh <version>`](scripts/pin-release.sh). It reads those digests, refuses a draft release, a missing or doubled digest and a tag that moved on GHCR since, and writes `compose.yml`'s four images as `ghcr.io/kup1ng/<name>:<version>@sha256:<digest>` and `VERSION` = `<version>`. Running it again changes nothing; `scripts/pin-release.sh --check <version>` checks the files without writing.
 3. Commit `compose.yml` and `VERSION` as `chore: <version>`, and push.
-4. Wait for CI to pass on that commit (on the branch's pull request: `gh pr checks <n> --repo Kup1ng/ace-install`).
+4. Wait for CI on that push (CI runs on every push to `m15-install-v2` and `main`): `gh run list --repo Kup1ng/ace-install --branch m15-install-v2 --limit 1` (`main` from 2.0.0 on), then `gh run watch <id> --repo Kup1ng/ace-install --exit-status`; it must pass.
 5. Tag that commit and push the tag: `git tag -a v<version> -m v<version>`, then `git push origin refs/tags/v<version>`.
