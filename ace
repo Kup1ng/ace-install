@@ -83,6 +83,31 @@ fetch() {
   fi
 }
 
+# check_stack VERSION FILE checks a version's compose.yml before anything is
+# pulled (D52.53 (4)) and prints pinned or unpinned: every image is Ace's own
+# on GHCR and names VERSION, by the digest its release recorded for a release
+# (x.y.z, x.y.z-rc.N); only another prerelease may take ACE_VERSION's tag.
+check_stack() {
+  local to="$1" ref="${ACE_INSTALL_REF:-v$1}" image tag digest n=0 pinned=0 hint
+  hint="take the files of ace-install's tag v${to}: unset ACE_INSTALL_REF"
+  [[ "$ref" != "v$to" ]] || hint="ace-install's tag v${to} is not a finished release; pick another version"
+  while read -r _ image; do
+    [[ "$image" =~ ^ghcr\.io/kup1ng/[a-z0-9._-]+:([^@]+)(@sha256:[0-9a-f]{64})?$ ]] ||
+      die "ace-install ${ref}'s stack pulls ${image}, not one of Ace's images; ${hint}; nothing changed"
+    tag="${BASH_REMATCH[1]}" digest="${BASH_REMATCH[2]}" n=$((n + 1))
+    if [[ "$tag" == "$to" && -n "$digest" ]]; then
+      pinned=$((pinned + 1))
+    elif [[ "$tag" != "$to" && "$tag" != "\${ACE_VERSION}" && "$tag" != "\${ACE_VERSION:"*"}" ]]; then
+      die "ace-install ${ref}'s stack is ${tag}'s, not ${to}'s (${image}); ${hint}; nothing changed"
+    fi
+  done < <(grep -E '^[[:space:]]+image:[[:space:]]' "$2")
+  ((n > 0)) || die "ace-install ${ref}'s stack names no image; ${hint}; nothing changed"
+  if ((pinned == n)); then echo pinned; return 0; fi
+  [[ ! "$to" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]] ||
+    die "${to} is a release, but ace-install ${ref}'s stack pulls its images by tag, not by the digests its release recorded; ${hint}; nothing changed"
+  echo unpinned
+}
+
 # healthy VERSION waits up to 3 minutes for the panel to answer its health
 # check as VERSION.
 healthy() {
@@ -280,6 +305,7 @@ do_upgrade() {
     die "this panel runs ${from:-an unknown version}, and ${to} starts on a fresh install: nothing carries over from 1.x (v2 has no MySQL and a new database). Install ${to} on a fresh server (install.sh), or stay on the 1.x line (ace upgrade 1.x.y); nothing changed"
   fi
   fetch "$to" compose.yml "$new/compose.yml" || die "cannot download the stack of ${to}; nothing changed"
+  check_stack "$to" "$new/compose.yml" >/dev/null
   render_caddyfile "$new/Caddyfile" # this version's Caddyfile, from the same .env
   say "Pulling the images of ${to}"
   ACE_VERSION="$to" docker compose --env-file "$dir/.env" -f "$new/compose.yml" pull </dev/null ||
@@ -336,6 +362,10 @@ main() {
   __check-cert)
     # install.sh checks an owner's certificate before it changes anything.
     check_cert "$@"
+    return 0
+    ;;
+  __check-stack) # and the images of the stack it fetched (check_stack)
+    check_stack "$@"
     return 0
     ;;
   esac

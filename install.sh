@@ -21,7 +21,7 @@
 #   ACE_APT_MIRROR=<url>   mirror of the Ubuntu archive, for this install only
 #   ACE_ANY_OS=1           try a system other than Ubuntu 22.04/24.04 (unsupported)
 #   ACE_INSTALL_REF=<ref>  the ace-install ref to take the files from (default: v<version>)
-#   ACE_DRY_RUN=1          only resolve the version and check the files; change nothing
+#   ACE_DRY_RUN=1          only resolve the version and check the files and images; change nothing
 set -euo pipefail
 
 say() { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
@@ -270,10 +270,12 @@ resolve_version() {
 }
 
 # fetch_files downloads the stack and the ace command of the install's ref
-# into $tmp, which also proves the ref has them.
+# into $tmp, which also proves the ref has them, and has that ace check the
+# stack's images for this version: stack is pinned or unpinned (by tag).
 fetch_files() {
   fetch compose.yml "$tmp/compose.yml"
   fetch ace "$tmp/ace"
+  stack="$(bash "$tmp/ace" __check-stack "$ACE_VERSION" "$tmp/compose.yml")" || exit 1
 }
 
 # ask_tls reads how the panel gets its HTTPS certificate and, for custom,
@@ -316,8 +318,8 @@ main() {
   if [[ "${ACE_DRY_RUN:-}" == 1 ]]; then
     resolve_version
     fetch_files
-    say "Dry run: would install the Ace panel ${ACE_VERSION} from ace-install ${ref}; nothing changed"
-    printf 'version=%s\nref=%s\n' "$ACE_VERSION" "$ref"
+    say "Dry run: would install the Ace panel ${ACE_VERSION} from ace-install ${ref} (images ${stack}); nothing changed"
+    printf 'version=%s\nref=%s\nstack=%s\n' "$ACE_VERSION" "$ref" "$stack"
     return 0
   fi
 
