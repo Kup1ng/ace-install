@@ -7,7 +7,9 @@
 # rollback by hand, an upgrade that goes back by itself, the refusals (a
 # 1.x target, a 1.x panel), the last 3 backups, ace apply, ace certificate
 # (with openssl), that ACE_PROXY reaches curl through its environment and
-# never its command line, and that no temporary file stays.
+# never its command line, the stack's images (a release's pulling by tag or
+# another version's is refused, a development prerelease may pull by tag),
+# and that no temporary file stays.
 #
 # It writes /opt/ace and /usr/local/bin/ace, so it runs only in CI or in a
 # throwaway container with openssl:
@@ -31,7 +33,9 @@ mkdir -p "$state" "$work/bin" "$work/tmp" "$work/certs"
 export ACE_TEST_SRC="$src" ACE_TEST_STATE="$state"
 
 # curl serves this checkout's files for every version listed in
-# $state/published: the script under test is the target version's own.
+# $state/published: the script under test is the target version's own. A
+# version's compose.yml is $state/stack.<version>, else this checkout's with
+# every image pinned to that version by a made-up digest.
 cat >"$work/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$ACE_TEST_STATE/curl.args"
@@ -47,7 +51,13 @@ while (($#)); do
 done
 ref="$(basename "$(dirname "$url")")"
 grep -qx "${ref#v}" "$ACE_TEST_STATE/published" || exit 22
-cp "$ACE_TEST_SRC/$(basename "$url")" "$out"
+file="$ACE_TEST_SRC/$(basename "$url")"
+if [[ "$(basename "$url")" == compose.yml ]]; then
+  file="$ACE_TEST_STATE/stack.${ref#v}"
+  [[ -f "$file" ]] || sed -E "s#^( +image: ghcr\.io/kup1ng/[a-z0-9-]+)[:@].*#\1:${ref#v}@sha256:$(printf '%064d' 0)#" \
+    "$ACE_TEST_SRC/compose.yml" >"$file"
+fi
+cp "$file" "$out"
 EOF
 
 # docker compose: up starts the version in /opt/ace/.env (and a forced
@@ -299,5 +309,25 @@ expect 0 2.0.7 "Done: the panel runs 2.0.7"
 [[ "$(wc -l <"$state/curl.args")" == 2 ]] || fail "curl did not fetch ace and compose.yml: $(cat "$state/curl.args")"
 ! grep -qF 'fake%2Fpassword' "$state/curl.args" || fail "the proxy is on curl's command line: $(cat "$state/curl.args")"
 [[ "$(sort -u "$state/curl.proxy")" == "$proxy_url" ]] || fail "curl did not get the proxy in its environment: $(cat "$state/curl.proxy")"
+
+echo "a release's stack that pulls by tag, or is another version's, changes nothing"
+printf '%s\n' 2.0.8 2.0.9 2.1.0-alpha.1 >>"$state/published"
+# shellcheck disable=SC2016 # compose.yml's text, not this shell's
+sed -E 's#^( +image: ghcr\.io/kup1ng/[a-z0-9-]+)[:@].*#\1:${ACE_VERSION:?}#' "$src/compose.yml" >"$state/stack.2.0.8"
+sed -E "s#^( +image: ghcr\.io/kup1ng/[a-z0-9-]+)[:@].*#\1:2.0.1@sha256:$(printf '%064d' 0)#" "$src/compose.yml" >"$state/stack.2.0.9"
+compose_before="$(cat /opt/ace/compose.yml)"
+backups_before="$(backups)"
+run ace upgrade 2.0.8
+expect 1 2.0.7 "2.0.8 is a release, but ace-install v2.0.8's stack pulls its images by tag, not by the digests its release recorded"
+[[ "$out" == *"ace-install's tag v2.0.8 is not a finished release; pick another version; nothing changed"* ]] || fail "the refusal does not say what to do: ${out}"
+run ace upgrade 2.0.9
+expect 1 2.0.7 "ace-install v2.0.9's stack is 2.0.1's, not 2.0.9's"
+[[ "$(cat /opt/ace/compose.yml)" == "$compose_before" && "$(backups)" == "$backups_before" ]] || fail "a refused stack changed something"
+
+echo "a development prerelease may pull by tag"
+cp "$state/stack.2.0.8" "$state/stack.2.1.0-alpha.1"
+run ace upgrade 2.1.0-alpha.1
+expect 0 2.1.0-alpha.1 "Done: the panel runs 2.1.0-alpha.1"
+cmp -s "$state/stack.2.1.0-alpha.1" /opt/ace/compose.yml || fail "the prerelease's stack was not installed"
 
 echo "all good"
