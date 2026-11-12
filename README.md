@@ -12,6 +12,8 @@ On a fresh server running **Ubuntu 24.04 or 22.04** (x86_64), as root:
 curl -fsSL https://raw.githubusercontent.com/Kup1ng/ace-install/main/install.sh | bash
 ```
 
+Until 2.0.0 is released, `main` still installs 1.x. To install a 2.x release candidate, use the command under [Versions](#versions).
+
 Before you start:
 
 - a domain whose DNS (an A record) points to the server, for the panel's address;
@@ -50,7 +52,7 @@ Set them before `bash`, e.g. `... | ACE_TLS=custom ACE_TLS_CERT=/root/panel.pem 
 | `ACE_PROXY` | An `http://` or `socks5://` proxy for apt and Docker on a server that cannot reach them directly. Docker keeps pulling through it (upgrades too). Its URL may hold a password, so other users of the server never see it: curl gets it in its environment and apt in a root-only file, never on a command line, and Docker reads it from a root-only `EnvironmentFile` (below), not from its unit's `Environment=`, which `systemctl show docker` shows everyone. |
 | `ACE_APT_MIRROR` | A mirror of the Ubuntu archive, e.g. `http://mirror.arvancloud.ir/ubuntu`, for this install only; the server's own sources stay. |
 | `ACE_ANY_OS=1` | Try a system other than Ubuntu 22.04/24.04. Unsupported. |
-| `ACE_INSTALL_REF` | Take this repository's files (and the default version) from another branch or tag, e.g. `m15-install-v2` before 2.0.0 is released. |
+| `ACE_INSTALL_REF` | Take this repository's files (and the default version) from another branch or tag, e.g. `m15-install-v2` before 2.0.0 is released; until then, run that branch's own `install.sh` too (the command under [Versions](#versions)), since `main`'s is the 1.x installer. |
 | `ACE_DRY_RUN=1` | Only resolve the version and check that this repository has its files at the ref; nothing changes, no root needed. It prints `version=` and `ref=`. |
 
 An install that stopped half-way can run again: it keeps the secrets it already made.
@@ -106,7 +108,13 @@ Optional settings in `/opt/ace/.env`; after a change run `ace apply`:
 
 ## Versions
 
-[`VERSION`](VERSION) names the current release. The tag `v<version>` of this repository holds the files of that version, which the installer and `ace upgrade` take. Until 2.0.0 is released, `main` stays the 1.x installer and v2 lives on the branch `m15-install-v2` (`ACE_INSTALL_REF=m15-install-v2`), whose `VERSION` is the first 2.x release it installs (`2.0.0-rc.1`; set `ACE_VERSION` for another).
+[`VERSION`](VERSION) names the current release. The tag `v<version>` of this repository holds the files of that version, which the installer and `ace upgrade` take. Until 2.0.0 is released, `main` stays the 1.x installer and v2 lives on the branch `m15-install-v2` (`ACE_INSTALL_REF=m15-install-v2`), whose `VERSION` is the first 2.x release it installs (`2.0.0-rc.1`; set `ACE_VERSION` for another). Take `install.sh` from that branch as well, since `main`'s is the 1.x installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Kup1ng/ace-install/m15-install-v2/install.sh | ACE_INSTALL_REF=m15-install-v2 ACE_VERSION=2.0.0-rc.N bash
+```
+
+Replace `N` with the release candidate's number.
 
 ## Checks
 
