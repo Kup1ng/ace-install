@@ -9,7 +9,8 @@
 # (with openssl), that ACE_PROXY reaches curl through its environment and
 # never its command line, the stack's images (a release's pulling by tag or
 # another version's is refused, a development prerelease may pull by tag),
-# and that no temporary file stays.
+# and that no temporary file stays. The stubs are test/ace-stubs.sh's; the
+# stack's network and ACE_IPV6 are test/ace-ipv6.sh's.
 #
 # It writes /opt/ace and /usr/local/bin/ace, so it runs only in CI or in a
 # throwaway container with openssl:
@@ -17,133 +18,8 @@
 #   docker run --rm -v "$PWD:/src:ro" ubuntu:24.04 bash -c 'apt-get update -qq && apt-get install -y -qq openssl >/dev/null && bash /src/test/ace.sh'
 set -euo pipefail
 
-fail() {
-  printf 'FAIL: %s\n' "$*" >&2
-  exit 1
-}
-
-[[ $EUID -eq 0 ]] || fail "run as root"
-[[ -n "${CI:-}" || -f /.dockerenv ]] || fail "this test writes /opt/ace: run it in CI or a throwaway container"
-[[ ! -e /opt/ace ]] || fail "/opt/ace exists: this is no place for the test"
-
-src="$(cd "$(dirname "$0")/.." && pwd)"
-work="$(mktemp -d)"
-state="$work/state"
-mkdir -p "$state" "$work/bin" "$work/tmp" "$work/certs"
-export ACE_TEST_SRC="$src" ACE_TEST_STATE="$state"
-
-# curl serves this checkout's files for every version listed in
-# $state/published: the script under test is the target version's own. A
-# version's compose.yml is $state/stack.<version>, else this checkout's with
-# every image pinned to that version by a made-up digest.
-cat >"$work/bin/curl" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >>"$ACE_TEST_STATE/curl.args"
-printf '%s\n' "${https_proxy:-}" >>"$ACE_TEST_STATE/curl.proxy"
-out="" url=""
-while (($#)); do
-  case "$1" in
-  -o) out="$2"; shift 2 ;;
-  -x | --retry | --connect-timeout) shift 2 ;;
-  -*) shift ;;
-  *) url="$1"; shift ;;
-  esac
-done
-ref="$(basename "$(dirname "$url")")"
-grep -qx "${ref#v}" "$ACE_TEST_STATE/published" || exit 22
-file="$ACE_TEST_SRC/$(basename "$url")"
-if [[ "$(basename "$url")" == compose.yml ]]; then
-  file="$ACE_TEST_STATE/stack.${ref#v}"
-  [[ -f "$file" ]] || sed -E "s#^( +image: ghcr\.io/kup1ng/[a-z0-9-]+)[:@].*#\1:${ref#v}@sha256:$(printf '%064d' 0)#" \
-    "$ACE_TEST_SRC/compose.yml" >"$file"
-fi
-cp "$file" "$out"
-EOF
-
-# docker compose: up starts the version in /opt/ace/.env (and a forced
-# recreation of Caddy is counted); the panel answers healthy as that version
-# unless $state/broken lists it; a pull fails for the versions in
-# $state/unpullable; the dump prints a line.
-cat >"$work/bin/docker" <<'EOF'
-#!/usr/bin/env bash
-[[ "${1:-}" == compose ]] || exit 1
-shift
-env_file=/opt/ace/.env
-while [[ "${1:-}" == -* ]]; do
-  case "$1" in
-  --env-file) env_file="$2"; shift 2 ;;
-  -f) shift 2 ;;
-  *) shift ;;
-  esac
-done
-version() { sed -n 's/^ACE_VERSION=//p' "$1" | tail -1; }
-running="$(cat "$ACE_TEST_STATE/running")"
-case "${1:-}" in
-pull) ! grep -qx "${ACE_VERSION:-$(version "$env_file")}" "$ACE_TEST_STATE/unpullable" ;;
-up)
-  if [[ " $* " == *" --force-recreate "* && " $* " == *" caddy "* ]]; then
-    echo $(($(cat "$ACE_TEST_STATE/caddy" 2>/dev/null || echo 0) + 1)) >"$ACE_TEST_STATE/caddy"
-  else
-    version /opt/ace/.env >"$ACE_TEST_STATE/running"
-  fi
-  ;;
-exec)
-  case "$3" in
-  panel-api) grep -qx "$running" "$ACE_TEST_STATE/broken" || printf '{"status":"ok","version":"%s"}\n' "$running" ;;
-  postgres) echo "pg_dump of ${running}" ;;
-  esac
-  ;;
-esac
-EOF
-
-# date numbers the backups, as several are made in one second here; sleep
-# returns at once, so a panel that never gets healthy fails in no time.
-cat >"$work/bin/date" <<'EOF'
-#!/usr/bin/env bash
-n=$(($(cat "$ACE_TEST_STATE/clock" 2>/dev/null || echo 0) + 1))
-echo "$n" >"$ACE_TEST_STATE/clock"
-printf '20260101-%06d\n' "$n"
-EOF
-printf '#!/bin/sh\n' >"$work/bin/sleep"
-chmod 755 "$work/bin/"*
-export PATH="$work/bin:$PATH" TMPDIR="$work/tmp"
-
-# A panel 2.0.0 as install.sh leaves it.
-install -d /opt/ace /opt/ace/tls
-cp "$src/compose.yml" /opt/ace/compose.yml
-printf 'ACE_VERSION=2.0.0\nACE_DOMAIN=panel.example.test\nACE_PUBLIC_IP=192.0.2.10\nACE_TLS=acme\nACE_EMAIL=admin@example.test\n' >/opt/ace/.env
-chmod 600 /opt/ace/.env
-install -m 755 "$src/ace" /usr/local/bin/ace
-echo 2.0.0 >"$state/running"
-printf '%s\n' 1.1.0 2.0.0 2.0.1 2.0.2 2.0.3 2.0.4 2.0.5 2.0.6 2.0.7 >"$state/published"
-: >"$state/broken"
-: >"$state/unpullable"
-
-# run CMD... runs a command and keeps its output and exit status.
-run() {
-  set +e
-  out="$("$@" 2>&1)"
-  code=$?
-  set -e
-}
-
-# expect CODE VERSION [TEXT] checks the last command's exit status, the
-# version the panel has in .env and runs, a text in the output, and that no
-# temporary file stayed.
-expect() {
-  local want_code="$1" want="$2" text="${3:-}"
-  [[ "$code" == "$want_code" ]] || fail "exit ${code}, not ${want_code}: ${out}"
-  [[ "$(ace version)" == "$want" ]] || fail "ace version says $(ace version), not ${want}"
-  [[ "$(cat "$state/running")" == "$want" ]] || fail "the panel runs $(cat "$state/running"), not ${want}"
-  [[ -z "$text" || "$out" == *"$text"* ]] || fail "no \"${text}\" in: ${out}"
-  [[ -z "$(ls -A "$TMPDIR")" ]] || fail "temporary files stayed: $(ls -A "$TMPDIR")"
-  [[ -z "$(find /opt/ace -maxdepth 1 -name '*.??????')" ]] || fail "temporary files stayed in /opt/ace: $(ls -A /opt/ace)"
-}
-
-backups() { find /opt/ace/backups -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort; }
-caddy_recreated() { cat "$state/caddy" 2>/dev/null || echo 0; }
-has() { grep -qF -- "$1" /opt/ace/Caddyfile || fail "the Caddyfile lacks ${1}: $(cat /opt/ace/Caddyfile)"; }
-lacks() { ! grep -qF -- "$1" /opt/ace/Caddyfile || fail "the Caddyfile has ${1}: $(cat /opt/ace/Caddyfile)"; }
+# shellcheck source=test/ace-stubs.sh
+. "$(dirname "${BASH_SOURCE[0]}")/ace-stubs.sh"
 
 echo "panel-web reaches the API directly, never through a proxy"
 web="$(sed -n '/^  panel-web:$/,/^$/p' "$src/compose.yml")"
