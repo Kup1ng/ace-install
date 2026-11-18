@@ -13,7 +13,8 @@
 # Optional, in the environment (the README explains each one):
 #   ACE_VERSION=<x.y.z>    the version, 2.0.0 or later (default: the VERSION
 #                          file of ACE_INSTALL_REF, else main)
-#   ACE_DOMAIN, ACE_EMAIL, ACE_GHCR_USER, ACE_GHCR_TOKEN, ACE_OWNER: answers
+#   ACE_DOMAIN, ACE_EMAIL, ACE_GHCR_USER, ACE_OWNER: answers (the GHCR token is
+#                          asked for: a variable before bash stays in history)
 #   ACE_TLS=acme|custom    acme (default): Let's Encrypt, renewed by Caddy;
 #                          custom: ACE_TLS_CERT and ACE_TLS_KEY (PEM files)
 #   ACE_PROXY=<url>        http:// or socks5:// proxy for apt and Docker (for

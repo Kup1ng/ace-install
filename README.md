@@ -18,13 +18,13 @@ Before you start:
 
 - a domain whose DNS (an A record) points to the server, for the panel's address;
 - ports 80 and 443 open to everyone;
-- a GitHub token with the `read:packages` scope for the panel's images;
+- a GitHub token with the `read:packages` scope only, for the panel's images (it stays on the server: under [Files](#files));
 - for your own certificate (`ACE_TLS=custom`): its PEM file with the chain, and its key without a passphrase.
 
 The installer:
 
 1. checks the server: Ubuntu 22.04 or 24.04, root, no panel on it already; it warns when memory, disk or the clock look wrong;
-2. asks for the domain, how the panel gets its HTTPS certificate (below), the GitHub user and token, and the Owner's username;
+2. asks for the domain, how the panel gets its HTTPS certificate (below), the GitHub user and token (without showing what you type), and the Owner's username;
 3. installs Docker Engine from Docker's repository when it is missing or older than 25 (replacing Ubuntu's `docker.io`);
 4. writes the panel to `/opt/ace` and makes its secrets there (the master key and the database password), on the server only;
 5. starts the panel behind Caddy with HTTPS, then creates the Owner with a generated password, **shown once** at the end;
@@ -46,7 +46,7 @@ Set them before `bash`, e.g. `... | ACE_TLS=custom ACE_TLS_CERT=/root/panel.pem 
 | Variable | Use |
 |---|---|
 | `ACE_VERSION` | The version to install, 2.0.0 or later (its prereleases too); by default the one in [`VERSION`](VERSION) of `ACE_INSTALL_REF`, else of `main`. |
-| `ACE_DOMAIN`, `ACE_GHCR_USER`, `ACE_GHCR_TOKEN`, `ACE_OWNER` | The answers, so the install asks nothing. |
+| `ACE_DOMAIN`, `ACE_GHCR_USER`, `ACE_OWNER` | Answers, so the install does not ask for them. The GitHub token is not one of these: let the installer ask for it, since a token typed before `bash` stays in the shell's history. |
 | `ACE_TLS`, `ACE_EMAIL` | `acme` or `custom` (above); for `acme`, an optional email for Let's Encrypt's notices. |
 | `ACE_TLS_CERT`, `ACE_TLS_KEY` | For `custom`: the certificate (with its chain) and its key, as PEM files. They are copied to `/opt/ace/tls`. |
 | `ACE_PROXY` | An `http://` or `socks5://` proxy for apt and Docker on a server that cannot reach them directly. Docker keeps pulling through it (upgrades too). Its URL may hold a password, so other users of the server never see it: curl gets it in its environment and apt in a root-only file, never on a command line, and Docker reads it from a root-only `EnvironmentFile` (below), not from its unit's `Environment=`, which `systemctl show docker` shows everyone. |
@@ -93,6 +93,7 @@ An upgrade runs the target version's own `ace` from this repository's tag, so ea
 | `/opt/ace/Caddyfile` | Written by `ace` from `.env`, never by hand: one origin for the web app and the API; HSTS, `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin` and `Permissions-Policy` on every answer, and `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'` on `/api` (pages get theirs from the web app, with a per-request nonce); an upload that stalls gets 5 minutes (`read_body_idle`) |
 | `/opt/ace/tls/` | Your certificate for `ACE_TLS=custom`: `cert.pem` and `key.pem` (root only), mounted read-only into Caddy; empty for `acme` |
 | `/opt/ace/secrets/` | The master key and the database password (mode 700; never shown) |
+| `/root/.docker/config.json` | The GitHub token: the installer signs Docker in to `ghcr.io` with it (`docker login`), and Docker keeps it there unencrypted, as it warns when it signs in, in root's home, so only root reads it. `ace upgrade` pulls the next version's images with it. To replace the token: `docker login ghcr.io -u <user>` (it asks for the token), and the new one in **Settings → Nodes** for the nodes; the panel keeps that copy sealed with its master key |
 | `/opt/ace/backups/` | The database as it was before each of the last 3 upgrades (root only, no password) |
 | `/opt/ace/rollback/` | The files of the version before the last upgrade (`compose.yml`, `.env`, `Caddyfile`, `ace`), for `ace rollback` |
 | `/etc/systemd/system/docker.service.d/ace-proxy.conf` | With `ACE_PROXY`: the drop-in that points Docker at `ace-proxy.env` next to it, which holds the proxy (root only). An install with `ACE_PROXY` rewrites both, so a drop-in with the proxy in `Environment=` (as 1.x wrote it) goes away |
