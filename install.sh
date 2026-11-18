@@ -368,6 +368,7 @@ main() {
   )
   if [[ "$ACE_TLS" == custom ]]; then ace __tls-files "$ACE_TLS_CERT" "$ACE_TLS_KEY"; fi
   ace __caddyfile
+  ace __ipv6 # ACE_IPV6 in .env: the network gets IPv6 when this server can give it
 
   say "Pulling the panel's images"
   docker compose -f "$dir/compose.yml" pull </dev/null || die "cannot pull the panel's images (is the token right?)"
