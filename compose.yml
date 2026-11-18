@@ -29,7 +29,7 @@ name: ace
 
 services:
   postgres:
-    image: ghcr.io/kup1ng/ace-postgres:2.0.0-rc.1@sha256:300ebd02c6d4de9ee27ad7f6855d5d21b4d3a4a5117767c1197d284c635d9736
+    image: ghcr.io/kup1ng/ace-postgres:2.0.0-rc.2@sha256:300ebd02c6d4de9ee27ad7f6855d5d21b4d3a4a5117767c1197d284c635d9736
     environment:
       POSTGRES_USER: ace
       POSTGRES_DB: ace
@@ -45,7 +45,7 @@ services:
     restart: unless-stopped
 
   panel-api:
-    image: ghcr.io/kup1ng/ace-panel-api:2.0.0-rc.1@sha256:2e191a32a9a7ca044535915252c43954cac2b1738e3e6e58ec913755d606e114
+    image: ghcr.io/kup1ng/ace-panel-api:2.0.0-rc.2@sha256:07beb603ae507411b280276ad50d76b15e649ecc579021bf164c34e7e47d3774
     env_file: ./secrets/api.env
     environment:
       ACE_PANEL_MASTER_KEY_FILE: /run/secrets/master_key
@@ -67,7 +67,7 @@ services:
     restart: unless-stopped
 
   panel-web:
-    image: ghcr.io/kup1ng/ace-panel-web:2.0.0-rc.1@sha256:e54bde927b57cc4d0a7f7cb4030c5bead842710b3844c9a7f41618fa85e5d928
+    image: ghcr.io/kup1ng/ace-panel-web:2.0.0-rc.2@sha256:5e229b78a415df0a5338b9d61c85aaf68b4277f2b07955c7155ce8456d4bdf8d
     environment:
       # The sign-in page asks the API for the panel's default language from
       # the server side. It goes straight to panel-api, never through a
@@ -81,7 +81,7 @@ services:
   # HTTPS for ACE_DOMAIN (the Caddyfile `ace` writes from .env): a Let's
   # Encrypt certificate (ACE_TLS=acme) or the owner's from ./tls (custom).
   caddy:
-    image: ghcr.io/kup1ng/ace-caddy:2.0.0-rc.1@sha256:fc9cbc100585871d18d4e451cca7021785c90a7006087427ae5ceb3e4efe6424
+    image: ghcr.io/kup1ng/ace-caddy:2.0.0-rc.2@sha256:fc9cbc100585871d18d4e451cca7021785c90a7006087427ae5ceb3e4efe6424
     ports:
       - "80:80"
       - "443:443"
