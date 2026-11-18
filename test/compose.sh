@@ -8,6 +8,11 @@
 #   pinned    ghcr.io/kup1ng/<name>:<VERSION>@sha256:<64 hex>, what
 #             scripts/pin-release.sh writes for the release in VERSION
 #
+# It also checks the network: the project is named ace, no service picks a
+# network of its own, and the default network is exactly
+# `enable_ipv6: ${ACE_IPV6:-false}`, with no fixed subnet (`ace` relies on
+# all three; README: The stack's network).
+#
 # It reads the block-style `image:` lines, as install.sh and ace do. IMAGES,
 # when given, is a file of the images Docker resolves from the same
 # compose.yml with every profile and ACE_VERSION set (CI's
@@ -56,6 +61,20 @@ elif ((pinned == ${#names[@]})); then
 else
   fail "compose.yml pins ${pinned} of its ${#names[@]} images to ${version}: all or none (scripts/pin-release.sh ${version})"
 fi
+
+# The network: `ace` checks the stack's as ace_default (project ace, its
+# default network), so every service is on that one, which takes its IPv6
+# from ACE_IPV6 (IPv4 only without it) and its subnets from Docker.
+[[ "$(sed -n 's/^name:[[:space:]]*//p' "$dir/compose.yml" | tr -d '\r')" == ace ]] ||
+  fail "compose.yml's project is not named ace: ace checks the stack's network as ace_default"
+! grep -nE '^[[:space:]]+(networks|network_mode):' "$dir/compose.yml" ||
+  fail "a service in compose.yml chooses its network (above): every service stays on the default one"
+networks="$(awk '/^networks:/ { on = 1 } on && /^[^[:space:]#]/ && !/^networks:/ { on = 0 } on && NF && !/^[[:space:]]*#/' "$dir/compose.yml" | tr -d '\r')"
+# shellcheck disable=SC2016 # compose.yml's text, not this shell's
+want_networks=$'networks:\n  default:\n    enable_ipv6: ${ACE_IPV6:-false}'
+[[ "$networks" == "$want_networks" ]] ||
+  fail "compose.yml's networks are not exactly: ${want_networks} (Docker's own subnets, IPv6 from ACE_IPV6); they are: ${networks}"
+echo "compose.yml: every service is on the default network, whose IPv6 is ACE_IPV6's"
 
 [[ -n "$resolved" ]] || exit 0
 [[ -n "${ACE_VERSION:-}" ]] || fail "set ACE_VERSION to the value Docker resolved ${resolved} with"
