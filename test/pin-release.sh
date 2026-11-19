@@ -8,8 +8,10 @@
 # twice, a tag that moved on GHCR or is missing there, retried drops, the
 # pin itself (only the four image lines and VERSION change), running it
 # again, --check, the next release candidate, and test/compose.sh on pinned,
-# unpinned and broken stacks, and against lists of the images Docker
-# resolves (the same four, one more, one fewer). No root, no network:
+# unpinned and broken stacks (their images, and their network: a service on
+# a network of its own, a fixed subnet, IPv6 not from ACE_IPV6, none, a
+# project not named ace), and against lists of the images Docker resolves
+# (the same four, one more, one fewer). No root, no network:
 #
 #   bash test/pin-release.sh
 # shellcheck disable=SC2016 # the notes quote images in backticks; ${ACE_VERSION} is text here
@@ -294,6 +296,26 @@ expect 1 "compose.yml has 5 images, not the 4"
 cp "$work/compose.good" "$repo/compose.yml"
 check
 expect 0
+
+echo "test/compose.sh: every service on the default network, whose IPv6 is ACE_IPV6's"
+check
+expect 0 "every service is on the default network, whose IPv6 is ACE_IPV6's"
+# broken SED-SCRIPT checks that test/compose.sh refuses the good stack
+# changed by SED-SCRIPT with TEXT.
+broken() {
+  cp "$work/compose.good" "$repo/compose.yml"
+  sed -i "$1" "$repo/compose.yml"
+  ! cmp -s "$work/compose.good" "$repo/compose.yml" || fail "sed changed nothing: $1"
+  check
+  expect 1 "$2"
+}
+broken 's#^    env_file: ./secrets/api.env$#&\n    networks: [default]#' "a service in compose.yml chooses its network"
+broken 's#^    env_file: ./secrets/api.env$#&\n    network_mode: host#' "a service in compose.yml chooses its network"
+broken 's#^    enable_ipv6: .*#&\n    ipam:\n      config:\n        - subnet: fd12:3456:789a:1::/64#' "compose.yml's networks are not exactly"
+broken 's#^    enable_ipv6: .*#    enable_ipv6: true#' "compose.yml's networks are not exactly"
+broken '/^networks:$/,/^$/d' "compose.yml's networks are not exactly" # 2.0.0-rc.2's stack
+broken 's#^name: ace$#name: panel#' "compose.yml's project is not named ace"
+cp "$work/compose.good" "$repo/compose.yml"
 
 echo "test/compose.sh IMAGES: Docker resolves the same images as the image: lines"
 # resolve VALUE runs test/compose.sh with $work/resolved as the images Docker

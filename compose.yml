@@ -18,7 +18,8 @@
 # CI checks that these lines are all the images Docker resolves.
 #
 # /opt/ace/.env holds ACE_VERSION, ACE_DOMAIN, ACE_PUBLIC_IP, ACE_TLS (acme
-# or custom) and the optional settings. The secrets live in /opt/ace/secrets
+# or custom), ACE_IPV6 (true or false: the network below) and the optional
+# settings. The secrets live in /opt/ace/secrets
 # (mode 700), made on this server and never shown:
 #   master_key   the panel's master key (base64, 32 bytes)
 #   pg_password  PostgreSQL's password
@@ -95,6 +96,19 @@ services:
       - panel-api
       - panel-web
     restart: unless-stopped
+
+# The stack's network, which every service is on (test/compose.sh). With
+# ACE_IPV6=true in .env it has IPv6 too, so Docker NATs IPv6 clients to Caddy
+# with their own address, as it does IPv4 ones; without it Docker's proxy
+# carries them, and the panel sees the network's IPv4 gateway instead (one
+# login rate limit and one audit address for every IPv6 client). Its IPv6
+# subnet comes from Docker's own pool (Docker 27 and later: a /64 of a ULA
+# /48 made from the engine's ID), so no fixed prefix can collide with
+# another network. `ace` sets ACE_IPV6 from what the server can do, and
+# makes the network again when its IPv6 changes (README: The stack's network).
+networks:
+  default:
+    enable_ipv6: ${ACE_IPV6:-false}
 
 volumes:
   pg-data:

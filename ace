@@ -9,10 +9,13 @@
 # new version is not healthy within 3 minutes. Going back never touches the
 # data: the panel's migrations only expand the schema until a later version
 # contracts it. v2 starts on a fresh install: a 1.x panel is never upgraded
-# to 2.x, and a 2.x panel never goes back to 1.x.
+# to 2.x, and a 2.x panel never goes back to 1.x. The stack's network has
+# IPv6 when the server can give it (ACE_IPV6); a version that changes that,
+# going up or back, makes the network again.
 set -euo pipefail
 
 dir=/opt/ace
+net=ace_default # the stack's network: Compose project ace, its default network
 repo_raw=https://raw.githubusercontent.com/Kup1ng/ace-install
 health_wait=60 # checks, 3 s apart: 3 minutes
 first_major=2  # this line's major version
@@ -34,7 +37,8 @@ Usage: ace <command>
   version                  the installed version
   restart [service]        restart the panel, or one of its services
   apply                    apply a change to .env: writes the Caddyfile again
-                           and recreates only the services that changed
+                           and recreates only the services that changed (the
+                           whole stack for ACE_IPV6: its network is made again)
   certificate <cert> <key> use your own HTTPS certificate (PEM files: the
                            certificate with its chain, and its key): checks
                            them, copies them to /opt/ace/tls, sets ACE_TLS=custom
@@ -122,7 +126,46 @@ healthy() {
   return 1
 }
 
-start() { compose up -d --remove-orphans </dev/null; }
+# ipv6 settles ACE_IPV6 in .env before the stack starts (compose.yml's
+# network). ACE_IPV6=false stays. Otherwise it is true only when the kernel
+# has IPv6 on (net.ipv6.conf.all.disable_ipv6=0: a kernel booted without
+# IPv6 has no such setting, nor /proc/net/if_inet6), Docker is 27 or later
+# (ip6tables on, subnets from its own ULA pool) and it creates an IPv6
+# network; else false, with a warning: the network stays IPv4 only.
+ipv6() {
+  local want v
+  want="$(setting ACE_IPV6)"
+  [[ "$want" =~ ^(true|false)?$ ]] || die "ACE_IPV6 in ${dir}/.env must be true or false"
+  [[ "$want" != false ]] || return 0
+  v="$(docker version --format '{{.Server.Version}}' 2>/dev/null || true)"
+  docker network rm ace-ipv6-check >/dev/null 2>&1 || true # left by an interrupted check
+  if [[ "$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null)" == 0 && "${v%%.*}" =~ ^[0-9]+$ ]] && ((${v%%.*} >= 27)) &&
+    docker network create --ipv6 ace-ipv6-check >/dev/null 2>&1; then
+    docker network rm ace-ipv6-check >/dev/null 2>&1 || true
+    [[ "$want" == true ]] || set_setting ACE_IPV6 true
+    return 0
+  fi
+  warn "the panel's network stays IPv4 only (ACE_IPV6=false in ${dir}/.env): this server's kernel has IPv6 off, or its Docker is older than 27 or cannot make an IPv6 network; the panel sees every IPv6 client as one address"
+  set_setting ACE_IPV6 false
+}
+
+# start brings the stack up. Docker cannot switch a network's IPv6 in place:
+# Compose recreates its network when the stack's config of it changed, but
+# keeps one an older Compose made (no config-hash label) as it is. So when
+# the network's IPv6 is not the stack's, the stack goes down first: its
+# containers and its network, never its volumes. Going back to a version
+# without IPv6 takes its network back the same way.
+start() {
+  local cfg want=false have
+  cfg="$(compose config --no-env-resolution --format json </dev/null 2>/dev/null || true)"
+  [[ "${cfg//[[:space:]]/}" != *'"enable_ipv6":true'* ]] || want=true
+  have="$(docker network inspect "$net" --format '{{.EnableIPv6}}' 2>/dev/null || true)"
+  if [[ -n "$cfg" && -n "$have" && "$have" != "$want" ]]; then
+    say "Making the panel's network again with enable_ipv6 ${want}: the panel stops and starts"
+    compose down --remove-orphans </dev/null || return 1
+  fi
+  compose up -d --remove-orphans </dev/null
+}
 
 # caddyfile prints the production Caddyfile for the settings in .env
 # (Plan §16): one origin for the web app and the API; HSTS with a low
@@ -249,6 +292,7 @@ certificate() {
 
 apply() {
   write_caddyfile
+  ipv6
   start
   if [[ "$caddy_changed" == 1 ]]; then
     compose up -d --force-recreate --no-deps caddy </dev/null
@@ -304,6 +348,7 @@ do_upgrade() {
   if (($(major "${from:-0}") < first_major)); then
     die "this panel runs ${from:-an unknown version}, and ${to} starts on a fresh install: nothing carries over from 1.x (v2 has no MySQL and a new database). Install ${to} on a fresh server (install.sh), or stay on the 1.x line (ace upgrade 1.x.y); nothing changed"
   fi
+  [[ "$(setting ACE_IPV6)" =~ ^(true|false)?$ ]] || die "ACE_IPV6 in ${dir}/.env must be true or false; nothing changed"
   fetch "$to" compose.yml "$new/compose.yml" || die "cannot download the stack of ${to}; nothing changed"
   check_stack "$to" "$new/compose.yml" >/dev/null
   render_caddyfile "$new/Caddyfile" # this version's Caddyfile, from the same .env
@@ -323,6 +368,7 @@ do_upgrade() {
   cp "$new/compose.yml" "$dir/compose.yml"
   install -m 644 "$new/Caddyfile" "$dir/Caddyfile"
   set_setting ACE_VERSION "$to"
+  ipv6
   if start && healthy "$to"; then
     install -m 755 "$self" /usr/local/bin/ace
     say "Done: the panel runs ${to}; ace rollback goes back to ${from}"
@@ -388,6 +434,7 @@ main() {
   rollback) rollback ;;
   __upgrade) do_upgrade "$@" ;;
   __caddyfile) write_caddyfile ;; # install.sh, once .env is written
+  __ipv6) ipv6 ;;                 # and ACE_IPV6, once Docker runs
   __tls-files) tls_files "$@" ;;  # install.sh, for ACE_TLS=custom
   *)
     usage >&2

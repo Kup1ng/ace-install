@@ -13,15 +13,26 @@ jobs:
     name: Scripts (shellcheck, bash -n, compose config)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: shellcheck
-        run: shellcheck -x install.sh ace scripts/pin-release.sh test/ace.sh test/install.sh test/pin-release.sh test/compose.sh
+        run: shellcheck -x install.sh ace scripts/pin-release.sh test/ace.sh test/ace-ipv6.sh test/ace-stubs.sh test/install.sh test/pin-release.sh test/compose.sh
+      - name: Every action is pinned by its full commit SHA, with its version in a comment
+        run: |
+          if grep -nE '^[[:space:]-]*uses:' .github/workflows/*.yml |
+            grep -vE 'uses: [A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40} # v[0-9]+(\.[0-9]+)*$'; then
+            echo "pin the actions above by their full commit SHA, with the version in a comment" >&2
+            exit 1
+          fi
       - name: bash -n
         run: |
           bash -n install.sh
           bash -n ace
           bash -n scripts/pin-release.sh
           bash -n test/ace.sh
+          bash -n test/ace-ipv6.sh
+          bash -n test/ace-stubs.sh
           bash -n test/install.sh
           bash -n test/pin-release.sh
           bash -n test/compose.sh
@@ -44,12 +55,28 @@ jobs:
           docker compose "${args[@]}" config --images >"$RUNNER_TEMP/images"
           cat "$RUNNER_TEMP/images"
           bash test/compose.sh . "$RUNNER_TEMP/images"
+      - name: The stack's one network takes its IPv6 from ACE_IPV6, IPv4 only without it
+        env:
+          ACE_VERSION: 0.0.0
+          ACE_DOMAIN: panel.example.test
+        run: |
+          ipv6() { docker compose -f compose.yml config --no-env-resolution --format json | tr -d '[:space:]' | grep -o '"enable_ipv6":[a-z]*'; }
+          [[ "$(docker compose -f compose.yml config --networks)" == default ]]
+          [[ "$(ipv6)" == '"enable_ipv6":false' ]]
+          [[ "$(ACE_IPV6=false ipv6)" == '"enable_ipv6":false' ]]
+          [[ "$(ACE_IPV6=true ipv6)" == '"enable_ipv6":true' ]]
+          if ACE_IPV6=1 docker compose -f compose.yml config --quiet 2>/dev/null; then
+            echo "Compose took ACE_IPV6=1; ace writes only true or false" >&2
+            exit 1
+          fi
 
   install:
     name: install.sh resolves versions (dry run)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: test/install.sh
         run: bash test/install.sh
 
@@ -57,14 +84,28 @@ jobs:
     name: ace upgrade, rollback, apply and certificate (against stubs)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: test/ace.sh
         run: sudo CI=true bash test/ace.sh
+
+  ace-ipv6:
+    name: ace and the stack's network with ACE_IPV6 (against stubs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: test/ace-ipv6.sh
+        run: sudo CI=true bash test/ace-ipv6.sh
 
   pin:
     name: scripts/pin-release.sh (against stub gh and docker)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: test/pin-release.sh
         run: bash test/pin-release.sh
