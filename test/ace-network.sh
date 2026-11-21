@@ -9,8 +9,10 @@
 # restarts when nothing changed; ace apply removes a leftover ACE_IPV6 (any
 # value, every such line) with one note and keeps the rest of .env, and
 # makes a network that has IPv6 again without it; ace __ipv6 is gone;
-# Docker is never asked to make or remove a network; and a Compose that
-# cannot print its config leaves the network to Compose.
+# Docker is never asked to make or remove a network; a Compose that cannot
+# print its config leaves the network to Compose; and after a rollback that
+# died before it put back 2.0.0-rc.3's ace, ace apply keeps ACE_IPV6 for
+# that version's stack.
 #
 # It writes /opt/ace and /usr/local/bin/ace, so it runs only in CI or in a
 # throwaway container:
@@ -167,5 +169,30 @@ run ace apply
 expect 0 2.0.0-rc.4 "applied /opt/ace/.env"
 [[ "$(downs)" == "$before" ]] || fail "the stack went down with no config to compare"
 rm "$state/config-fails"
+
+echo "after a rollback that died before it put back 2.0.0-rc.3's ace, ace apply keeps that stack's ACE_IPV6"
+as_rc3 true
+run ace upgrade 2.0.0-rc.4
+expect 0 2.0.0-rc.4 "$remake false"
+echo 2.0.0-rc.3 >"$state/broken"
+run ace rollback
+expect 1 2.0.0-rc.3 "the panel 2.0.0-rc.3 is not healthy within 3 minutes"
+: >"$state/broken"
+[[ -d /opt/ace/rollback ]] || fail "the rollback that died removed its files"
+ipv6_is true
+net_is true
+env_before="$(cat /opt/ace/.env)"
+before="$(downs)"
+run ace apply
+expect 0 2.0.0-rc.3 "applied /opt/ace/.env"
+[[ "$(said "$note") $(said "$remake")" == "0 0" ]] || fail "ace apply removed ACE_IPV6 or remade the network of 2.0.0-rc.3's stack: ${out}"
+[[ "$(cat /opt/ace/.env)" == "$env_before" ]] || fail "ace apply changed 2.0.0-rc.3's .env: $(cat /opt/ace/.env)"
+net_is true
+[[ "$(downs)" == "$before" ]] || fail "ace apply stopped 2.0.0-rc.3's panel"
+run ace rollback
+expect 0 2.0.0-rc.3 "Done: the panel runs 2.0.0-rc.3 again"
+[[ "$(said "$remake")" == 0 && "$(downs)" == "$before" ]] || fail "the second rollback remade the network: ${out}"
+ipv6_is true
+net_is true
 
 echo "all good"

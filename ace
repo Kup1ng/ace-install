@@ -129,9 +129,12 @@ healthy() {
 # drop_ipv6 removes a leftover ACE_IPV6 from .env, whatever its value
 # (2.0.0-rc.3 wrote it), with one note: the network is IPv4 only now and
 # compose.yml no longer reads it. The rollback's copy of .env keeps it, so
-# going back to 2.0.0-rc.3 gives that version's network the IPv6 it had.
+# going back to 2.0.0-rc.3 gives that version's network the IPv6 it had; and
+# while the stack in /opt/ace still reads it (2.0.0-rc.3's, after a rollback
+# that died before it put back that version's ace), it stays.
 drop_ipv6() {
   grep -q '^ACE_IPV6=' "$dir/.env" 2>/dev/null || return 0
+  ! grep -qE '^[^#]*[$][{]ACE_IPV6[:}]' "$dir/compose.yml" || return 0
   set_setting ACE_IPV6
   say "Removed ACE_IPV6 from ${dir}/.env: the panel's network is IPv4 only, so the setting does nothing any more"
 }
