@@ -8,11 +8,11 @@
 # panel with ACE_IPV6=false loses the line with no restart; nothing
 # restarts when nothing changed; ace apply removes a leftover ACE_IPV6 (any
 # value, every such line) with one note and keeps the rest of .env, and
-# makes a network that has IPv6 again without it; ace __ipv6 is gone;
-# Docker is never asked to make or remove a network; a Compose that cannot
-# print its config leaves the network to Compose; and after a rollback that
-# died before it put back 2.0.0-rc.3's ace, ace apply keeps ACE_IPV6 for
-# that version's stack.
+# makes a network that has IPv6 again without it; ace __ipv6, which
+# 2.0.0-rc.3's install.sh runs, does nothing; Docker is never asked to make
+# or remove a network; a Compose that cannot print its config leaves the
+# network to Compose; and after a rollback that died before it put back
+# 2.0.0-rc.3's ace, ace apply keeps ACE_IPV6 for that version's stack.
 #
 # It writes /opt/ace and /usr/local/bin/ace, so it runs only in CI or in a
 # throwaway container:
@@ -153,9 +153,15 @@ expect 0 2.0.0-rc.4 "$remake false"
 net_is false
 [[ "$(downs)" == $((before + 1)) ]] || fail "the stack did not go down once for its network: $(($(downs) - before)) downs"
 
-echo "ace __ipv6 is gone"
+echo "ace __ipv6, which 2.0.0-rc.3's install.sh runs, does nothing"
+env_before="$(cat /opt/ace/.env)"
+before="$(downs)"
 run ace __ipv6
-expect 1 2.0.0-rc.4 "unknown command: __ipv6"
+expect 0 2.0.0-rc.4
+[[ -z "$out" ]] || fail "ace __ipv6 said something: ${out}"
+[[ "$(cat /opt/ace/.env)" == "$env_before" ]] || fail "ace __ipv6 changed .env: $(cat /opt/ace/.env)"
+[[ "$(downs)" == "$before" ]] || fail "ace __ipv6 stopped the panel"
+net_is false
 
 echo "Docker is only asked about the network, never to make or remove one"
 grep -q '^network inspect ace_default ' "$state/network.log" || fail "ace never looked at the network"

@@ -10,7 +10,8 @@
 # another version's, not Ace's own), bad options, that it runs when piped
 # into bash, that ACE_PROXY reaches curl through its environment, never its
 # command line, and that the install leaves the network to compose.yml (no
-# ACE_IPV6, no `ace __ipv6`, which `ace` no longer has). It also sources install.sh
+# ACE_IPV6, no `ace __ipv6`, which `ace` keeps only as a no-op for
+# 2.0.0-rc.3's install.sh). It also sources install.sh
 # to check apt_proxy and docker_proxy against a stub systemctl: apt reads the
 # proxy from a root-only file, and Docker's goes into a root-only
 # EnvironmentFile, never into the unit's Environment=, which every user can
@@ -186,7 +187,7 @@ expect 1 "ACE_PROXY must be"
 
 echo "the install leaves the network to compose.yml: no ACE_IPV6, no ace __ipv6"
 ! grep -nE 'ACE_IPV6|__ipv6' "$src/install.sh" ||
-  fail "install.sh still settles ACE_IPV6 (above): the network is IPv4 only in compose.yml, and ace has no __ipv6"
+  fail "install.sh still settles ACE_IPV6 (above): the network is IPv4 only in compose.yml, and ace __ipv6 does nothing"
 
 echo "piped into bash, as the install command runs it, it runs main"
 set +e

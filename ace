@@ -425,6 +425,9 @@ main() {
   __upgrade) do_upgrade "$@" ;;
   __caddyfile) write_caddyfile ;; # install.sh, once .env is written
   __tls-files) tls_files "$@" ;;  # install.sh, for ACE_TLS=custom
+  # 2.0.0-rc.3's install.sh runs it once .env is written (GitHub's raw cache
+  # can serve that install.sh for minutes after a release): nothing to do.
+  __ipv6) ;;
   *)
     usage >&2
     die "unknown command: ${cmd}"
