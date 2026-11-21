@@ -157,8 +157,7 @@ expect 1 2.0.0-rc.4 "unknown command: __ipv6"
 
 echo "Docker is only asked about the network, never to make or remove one"
 grep -q '^network inspect ace_default ' "$state/network.log" || fail "ace never looked at the network"
-[[ -z "$(grep -v '^network inspect ace_default ' "$state/network.log")" ]] ||
-  fail "ace ran other network commands: $(grep -v '^network inspect ace_default ' "$state/network.log")"
+! grep -v '^network inspect ace_default ' "$state/network.log" || fail "ace ran the other network commands above"
 
 echo "a Compose that cannot print its config leaves the network to Compose"
 echo true >"$state/net"
