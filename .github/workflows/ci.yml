@@ -17,7 +17,7 @@ jobs:
         with:
           persist-credentials: false
       - name: shellcheck
-        run: shellcheck -x install.sh ace scripts/pin-release.sh test/ace.sh test/ace-ipv6.sh test/ace-stubs.sh test/install.sh test/pin-release.sh test/compose.sh
+        run: shellcheck -x install.sh ace scripts/pin-release.sh test/ace.sh test/ace-network.sh test/ace-stubs.sh test/install.sh test/pin-release.sh test/compose.sh
       - name: Every action is pinned by its full commit SHA, with its version in a comment
         run: |
           if grep -nE '^[[:space:]-]*uses:' .github/workflows/*.yml |
@@ -31,7 +31,7 @@ jobs:
           bash -n ace
           bash -n scripts/pin-release.sh
           bash -n test/ace.sh
-          bash -n test/ace-ipv6.sh
+          bash -n test/ace-network.sh
           bash -n test/ace-stubs.sh
           bash -n test/install.sh
           bash -n test/pin-release.sh
@@ -55,7 +55,7 @@ jobs:
           docker compose "${args[@]}" config --images >"$RUNNER_TEMP/images"
           cat "$RUNNER_TEMP/images"
           bash test/compose.sh . "$RUNNER_TEMP/images"
-      - name: The stack's one network takes its IPv6 from ACE_IPV6, IPv4 only without it
+      - name: The stack's one network is IPv4 only, whatever ACE_IPV6 says, and only Caddy publishes ports, on IPv4 only
         env:
           ACE_VERSION: 0.0.0
           ACE_DOMAIN: panel.example.test
@@ -63,12 +63,11 @@ jobs:
           ipv6() { docker compose -f compose.yml config --no-env-resolution --format json | tr -d '[:space:]' | grep -o '"enable_ipv6":[a-z]*'; }
           [[ "$(docker compose -f compose.yml config --networks)" == default ]]
           [[ "$(ipv6)" == '"enable_ipv6":false' ]]
-          [[ "$(ACE_IPV6=false ipv6)" == '"enable_ipv6":false' ]]
-          [[ "$(ACE_IPV6=true ipv6)" == '"enable_ipv6":true' ]]
-          if ACE_IPV6=1 docker compose -f compose.yml config --quiet 2>/dev/null; then
-            echo "Compose took ACE_IPV6=1; ace writes only true or false" >&2
-            exit 1
-          fi
+          [[ "$(ACE_IPV6=true ipv6)" == '"enable_ipv6":false' ]]
+          ports="$(docker compose -f compose.yml config --format json |
+            jq -c '[.services | to_entries[] | .key as $s | (.value.ports // [])[] | [$s, .host_ip, .published, .target, .protocol]] | sort')"
+          echo "$ports"
+          [[ "$ports" == '[["caddy","0.0.0.0","443",443,"tcp"],["caddy","0.0.0.0","443",443,"udp"],["caddy","0.0.0.0","80",80,"tcp"]]' ]]
 
   install:
     name: install.sh resolves versions (dry run)
@@ -90,15 +89,15 @@ jobs:
       - name: test/ace.sh
         run: sudo CI=true bash test/ace.sh
 
-  ace-ipv6:
-    name: ace and the stack's network with ACE_IPV6 (against stubs)
+  ace-network:
+    name: ace and the stack's IPv4-only network (against stubs)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: test/ace-ipv6.sh
-        run: sudo CI=true bash test/ace-ipv6.sh
+      - name: test/ace-network.sh
+        run: sudo CI=true bash test/ace-network.sh
 
   pin:
     name: scripts/pin-release.sh (against stub gh and docker)
