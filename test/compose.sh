@@ -10,8 +10,10 @@
 #
 # It also checks the network: the project is named ace, no service picks a
 # network of its own, and the default network is exactly
-# `enable_ipv6: ${ACE_IPV6:-false}`, with no fixed subnet (`ace` relies on
-# all three; README: The stack's network).
+# `enable_ipv6: false`, IPv4 only whatever .env says, with no fixed subnet
+# (`ace` relies on all three); and that only Caddy publishes ports, exactly
+# 0.0.0.0:80:80, 0.0.0.0:443:443 and 0.0.0.0:443:443/udp in block style, so
+# nothing listens on IPv6 (README: The stack's network).
 #
 # It reads the block-style `image:` lines, as install.sh and ace do. IMAGES,
 # when given, is a file of the images Docker resolves from the same
@@ -63,18 +65,32 @@ else
 fi
 
 # The network: `ace` checks the stack's as ace_default (project ace, its
-# default network), so every service is on that one, which takes its IPv6
-# from ACE_IPV6 (IPv4 only without it) and its subnets from Docker.
+# default network), so every service is on that one, which is IPv4 only by
+# a literal (no .env value turns IPv6 on) and takes its subnet from Docker.
 [[ "$(sed -n 's/^name:[[:space:]]*//p' "$dir/compose.yml" | tr -d '\r')" == ace ]] ||
   fail "compose.yml's project is not named ace: ace checks the stack's network as ace_default"
 ! grep -nE '^[[:space:]]+(networks|network_mode):' "$dir/compose.yml" ||
   fail "a service in compose.yml chooses its network (above): every service stays on the default one"
 networks="$(awk '/^networks:/ { on = 1 } on && /^[^[:space:]#]/ && !/^networks:/ { on = 0 } on && NF && !/^[[:space:]]*#/' "$dir/compose.yml" | tr -d '\r')"
-# shellcheck disable=SC2016 # compose.yml's text, not this shell's
-want_networks=$'networks:\n  default:\n    enable_ipv6: ${ACE_IPV6:-false}'
+want_networks=$'networks:\n  default:\n    enable_ipv6: false'
 [[ "$networks" == "$want_networks" ]] ||
-  fail "compose.yml's networks are not exactly: ${want_networks} (Docker's own subnets, IPv6 from ACE_IPV6); they are: ${networks}"
-echo "compose.yml: every service is on the default network, whose IPv6 is ACE_IPV6's"
+  fail "compose.yml's networks are not exactly: ${want_networks} (IPv4 only, Docker's own subnet); they are: ${networks}"
+echo "compose.yml: every service is on the default network, which is IPv4 only"
+
+# The published ports, one "SERVICE PORT" line each: a block-style list
+# item without its quotes; anything else under ports (flow style, the long
+# syntax, a value after ports:) is printed as it is, so it never matches.
+ports="$(tr -d '\r' <"$dir/compose.yml" | awk '
+  /^[^[:space:]#]/ { top = $1; on = 0; next }
+  top != "services:" { next }
+  /^  [^[:space:]#]/ { svc = $1; sub(/:$/, "", svc); on = 0; next }
+  /^    [^[:space:]#]/ { on = ($1 == "ports:"); if (on && NF > 1) print svc, $0; next }
+  on && /^      [^[:space:]#]/ { p = $0; sub(/^      (- )?/, "", p); gsub(/["\047]/, "", p); print svc, p }
+')"
+want_ports=$'caddy 0.0.0.0:80:80\ncaddy 0.0.0.0:443:443\ncaddy 0.0.0.0:443:443/udp'
+[[ "$ports" == "$want_ports" ]] ||
+  fail "compose.yml's published ports are not exactly Caddy's, on IPv4 only and in block style: ${want_ports}; they are: ${ports}"
+echo "compose.yml: only Caddy publishes ports, on IPv4 only (0.0.0.0)"
 
 [[ -n "$resolved" ]] || exit 0
 [[ -n "${ACE_VERSION:-}" ]] || fail "set ACE_VERSION to the value Docker resolved ${resolved} with"

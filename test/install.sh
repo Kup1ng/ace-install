@@ -9,8 +9,8 @@
 # the version for a release, by tag only for a development prerelease,
 # another version's, not Ace's own), bad options, that it runs when piped
 # into bash, that ACE_PROXY reaches curl through its environment, never its
-# command line, and that the install settles ACE_IPV6 (`ace __ipv6`) after
-# writing .env and before it pulls and starts the stack. It also sources install.sh
+# command line, and that the install leaves the network to compose.yml (no
+# ACE_IPV6, no `ace __ipv6`, which `ace` no longer has). It also sources install.sh
 # to check apt_proxy and docker_proxy against a stub systemctl: apt reads the
 # proxy from a root-only file, and Docker's goes into a root-only
 # EnvironmentFile, never into the unit's Environment=, which every user can
@@ -184,19 +184,9 @@ expect 1 "ACE_TLS must be acme or custom"
 dry ACE_VERSION=2.0.0 ACE_PROXY=ftp://proxy.example.test
 expect 1 "ACE_PROXY must be"
 
-echo "ACE_IPV6 is settled once .env is written, before the stack is pulled and started"
-# line PATTERN prints the line number of main's only line matching PATTERN.
-line() {
-  local n
-  n="$(sed -n '/^main() {$/,/^}$/=' "$src/install.sh" | head -1)"
-  n="$(awk -v from="$n" -v re="$1" 'NR >= from && $0 ~ re { print NR }' "$src/install.sh")"
-  [[ "$n" =~ ^[0-9]+$ ]] || fail "install.sh's main has not one line matching ${1}: ${n}"
-  printf '%s' "$n"
-}
-env_line="$(line "printf 'ACE_VERSION=")" ipv6_line="$(line '^  ace __ipv6( |$)')"
-pull_line="$(line 'compose.yml" pull ')" up_line="$(line 'compose.yml" up -d ')"
-((env_line < ipv6_line && ipv6_line < pull_line && pull_line < up_line)) ||
-  fail "install.sh writes .env (line ${env_line}), runs ace __ipv6 (${ipv6_line}), pulls (${pull_line}) and starts (${up_line}) out of order"
+echo "the install leaves the network to compose.yml: no ACE_IPV6, no ace __ipv6"
+! grep -nE 'ACE_IPV6|__ipv6' "$src/install.sh" ||
+  fail "install.sh still settles ACE_IPV6 (above): the network is IPv4 only in compose.yml, and ace has no __ipv6"
 
 echo "piped into bash, as the install command runs it, it runs main"
 set +e

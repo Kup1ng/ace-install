@@ -8,10 +8,13 @@
 # twice, a tag that moved on GHCR or is missing there, retried drops, the
 # pin itself (only the four image lines and VERSION change), running it
 # again, --check, the next release candidate, and test/compose.sh on pinned,
-# unpinned and broken stacks (their images, and their network: a service on
-# a network of its own, a fixed subnet, IPv6 not from ACE_IPV6, none, a
-# project not named ace), and against lists of the images Docker resolves
-# (the same four, one more, one fewer). No root, no network:
+# unpinned and broken stacks (their images; their network: a service on a
+# network of its own, a fixed subnet, IPv6 on or from ACE_IPV6 as
+# 2.0.0-rc.3 had it, none, a project not named ace; and their published
+# ports: Caddy's on every address as 2.0.0-rc.3 had them, or on IPv6, one
+# more or fewer, another service's, flow style, the long syntax), and
+# against lists of the images Docker resolves (the same four, one more, one
+# fewer). No root, no network:
 #
 #   bash test/pin-release.sh
 # shellcheck disable=SC2016 # the notes quote images in backticks; ${ACE_VERSION} is text here
@@ -297,9 +300,9 @@ cp "$work/compose.good" "$repo/compose.yml"
 check
 expect 0
 
-echo "test/compose.sh: every service on the default network, whose IPv6 is ACE_IPV6's"
+echo "test/compose.sh: every service on the default network, which is IPv4 only"
 check
-expect 0 "every service is on the default network, whose IPv6 is ACE_IPV6's"
+expect 0 "every service is on the default network, which is IPv4 only"
 # broken SED-SCRIPT checks that test/compose.sh refuses the good stack
 # changed by SED-SCRIPT with TEXT.
 broken() {
@@ -311,10 +314,24 @@ broken() {
 }
 broken 's#^    env_file: ./secrets/api.env$#&\n    networks: [default]#' "a service in compose.yml chooses its network"
 broken 's#^    env_file: ./secrets/api.env$#&\n    network_mode: host#' "a service in compose.yml chooses its network"
-broken 's#^    enable_ipv6: .*#&\n    ipam:\n      config:\n        - subnet: fd12:3456:789a:1::/64#' "compose.yml's networks are not exactly"
+broken 's#^    enable_ipv6: .*#&\n    ipam:\n      config:\n        - subnet: 172.30.0.0/24#' "compose.yml's networks are not exactly"
 broken 's#^    enable_ipv6: .*#    enable_ipv6: true#' "compose.yml's networks are not exactly"
+broken 's#^    enable_ipv6: .*#    enable_ipv6: ${ACE_IPV6:-false}#' "compose.yml's networks are not exactly" # 2.0.0-rc.3's stack
 broken '/^networks:$/,/^$/d' "compose.yml's networks are not exactly" # 2.0.0-rc.2's stack
 broken 's#^name: ace$#name: panel#' "compose.yml's project is not named ace"
+
+echo "test/compose.sh: only Caddy publishes ports, on IPv4 only"
+cp "$work/compose.good" "$repo/compose.yml"
+check
+expect 0 "only Caddy publishes ports, on IPv4 only (0.0.0.0)"
+ports_broken="compose.yml's published ports are not exactly Caddy's, on IPv4 only and in block style"
+broken 's#"0\.0\.0\.0:443:443"#"443:443"#' "$ports_broken" # 2.0.0-rc.3's: every address, IPv6 too
+broken 's#"0\.0\.0\.0:80:80"#"[::]:80:80"#' "$ports_broken"
+broken 's#^      - "0\.0\.0\.0:443:443/udp"$#&\n      - "0.0.0.0:8443:8443"#' "$ports_broken"
+broken '/^      - "0\.0\.0\.0:443:443\/udp"$/d' "$ports_broken"
+broken 's#^    env_file: ./secrets/api.env$#&\n    ports:\n      - "127.0.0.1:8080:8080"#' "$ports_broken"
+broken 's#^    ports:$#    ports: ["0.0.0.0:80:80"]#' "$ports_broken"
+broken 's#^      - "0\.0\.0\.0:80:80"$#      - target: 80\n        published: "80"\n        host_ip: 0.0.0.0#' "$ports_broken"
 cp "$work/compose.good" "$repo/compose.yml"
 
 echo "test/compose.sh IMAGES: Docker resolves the same images as the image: lines"

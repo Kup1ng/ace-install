@@ -10,7 +10,7 @@
 # never its command line, the stack's images (a release's pulling by tag or
 # another version's is refused, a development prerelease may pull by tag),
 # and that no temporary file stays. The stubs are test/ace-stubs.sh's; the
-# stack's network and ACE_IPV6 are test/ace-ipv6.sh's.
+# stack's network is test/ace-network.sh's.
 #
 # It writes /opt/ace and /usr/local/bin/ace, so it runs only in CI or in a
 # throwaway container with openssl:
