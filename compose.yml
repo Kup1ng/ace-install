@@ -18,8 +18,7 @@
 # CI checks that these lines are all the images Docker resolves.
 #
 # /opt/ace/.env holds ACE_VERSION, ACE_DOMAIN, ACE_PUBLIC_IP, ACE_TLS (acme
-# or custom), ACE_IPV6 (true or false: the network below) and the optional
-# settings. The secrets live in /opt/ace/secrets
+# or custom) and the optional settings. The secrets live in /opt/ace/secrets
 # (mode 700), made on this server and never shown:
 #   master_key   the panel's master key (base64, 32 bytes)
 #   pg_password  PostgreSQL's password
@@ -81,12 +80,14 @@ services:
 
   # HTTPS for ACE_DOMAIN (the Caddyfile `ace` writes from .env): a Let's
   # Encrypt certificate (ACE_TLS=acme) or the owner's from ./tls (custom).
+  # Its ports are published on IPv4 only (0.0.0.0): the panel has no AAAA
+  # record and no IPv6 (the network below; test/compose.sh).
   caddy:
     image: ghcr.io/kup1ng/ace-caddy:2.0.0-rc.3@sha256:fc9cbc100585871d18d4e451cca7021785c90a7006087427ae5ceb3e4efe6424
     ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
+      - "0.0.0.0:80:80"
+      - "0.0.0.0:443:443"
+      - "0.0.0.0:443:443/udp"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./tls:/etc/caddy/tls:ro
@@ -97,18 +98,16 @@ services:
       - panel-web
     restart: unless-stopped
 
-# The stack's network, which every service is on (test/compose.sh). With
-# ACE_IPV6=true in .env it has IPv6 too, so Docker NATs IPv6 clients to Caddy
-# with their own address, as it does IPv4 ones; without it Docker's proxy
-# carries them, and the panel sees the network's IPv4 gateway instead (one
-# login rate limit and one audit address for every IPv6 client). Its IPv6
-# subnet comes from Docker's own pool (Docker 27 and later: a /64 of a ULA
-# /48 made from the engine's ID), so no fixed prefix can collide with
-# another network. `ace` sets ACE_IPV6 from what the server can do, and
-# makes the network again when its IPv6 changes (README: The stack's network).
+# The stack's network, which every service is on (test/compose.sh), is IPv4
+# only: the panel's domain has no AAAA record, ever, and Caddy listens on
+# IPv4 only (above), so no IPv6 client reaches it through Docker's proxy as
+# the network's gateway. Its subnet is Docker's own. 2.0.0-rc.3 gave it IPv6
+# where the server could (ACE_IPV6); `ace` makes a network that has IPv6
+# again without it, and going back to 2.0.0-rc.3 makes it again as that
+# version had it (README: The stack's network).
 networks:
   default:
-    enable_ipv6: ${ACE_IPV6:-false}
+    enable_ipv6: false
 
 volumes:
   pg-data:
